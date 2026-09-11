@@ -314,9 +314,25 @@ function TaskDetail({ task, translations, onAction }) {
 export default function App() {
   const [health, setHealth] = useState({ apiConfigured: false, mode: 'demo' });
   const [tasks, setTasks] = useState([]);
-  const [fixtures, setFixtures] = useState([]);
-  const [fixtureMeta, setFixtureMeta] = useState({ cache: null, quota: null });
-  const [hasQueriedFixtures, setHasQueriedFixtures] = useState(false);
+  const [fixtures, setFixtures] = useState(() => {
+    try {
+      const saved = localStorage.getItem('matchPulse:fixtures');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [fixtureMeta, setFixtureMeta] = useState(() => {
+    try {
+      const saved = localStorage.getItem('matchPulse:fixtureMeta');
+      return saved ? JSON.parse(saved) : { cache: null, quota: null };
+    } catch {
+      return { cache: null, quota: null };
+    }
+  });
+  const [hasQueriedFixtures, setHasQueriedFixtures] = useState(() => {
+    return localStorage.getItem('matchPulse:hasQueried') === '1';
+  });
   const [activeTaskId, setActiveTaskId] = useState(null);
   const [selectedIds, setSelectedIds] = useState([]);
   const [date, setDate] = useState(localDateValue());
@@ -379,6 +395,9 @@ export default function App() {
       setFixtures(body.fixtures);
       setFixtureMeta({ cache: body.cache || null, quota: body.quota || null });
       setHasQueriedFixtures(true);
+      localStorage.setItem('matchPulse:fixtures', JSON.stringify(body.fixtures));
+      localStorage.setItem('matchPulse:fixtureMeta', JSON.stringify({ cache: body.cache || null, quota: body.quota || null }));
+      localStorage.setItem('matchPulse:hasQueried', '1');
       if (body.cache?.quotaProtected) showToast('每日额度已进入保留区，赛事列表暂用缓存；监控任务仍可查询');
       else if (body.cache?.stale) showToast('比分服务暂时不可用，当前显示最近一次缓存');
     } catch (error) {
@@ -394,6 +413,9 @@ export default function App() {
     setSelectedIds([]);
     setFixtureMeta({ cache: null, quota: null });
     setHasQueriedFixtures(false);
+    localStorage.removeItem('matchPulse:fixtures');
+    localStorage.removeItem('matchPulse:fixtureMeta');
+    localStorage.setItem('matchPulse:hasQueried', '0');
   }
 
   function acceptApiKeyState(body) {
@@ -403,6 +425,9 @@ export default function App() {
     setSelectedIds([]);
     setFixtureMeta({ cache: null, quota: null });
     setHasQueriedFixtures(false);
+    localStorage.removeItem('matchPulse:fixtures');
+    localStorage.removeItem('matchPulse:fixtureMeta');
+    localStorage.setItem('matchPulse:hasQueried', '0');
   }
 
   async function openApiKeySettings() {
