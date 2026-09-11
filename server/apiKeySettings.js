@@ -84,11 +84,32 @@ export function getActiveApiKey(settings) {
   return settings.apiKeys.find((item) => item.id === settings.activeApiKeyId)?.key || '';
 }
 
+export function getApiKey(settings, id) {
+  return settings.apiKeys.find((item) => item.id === id) || null;
+}
+
+export function updateApiKeyTest(settings, id, { status, message, quota = null, testedAt = new Date().toISOString() }) {
+  if (!['healthy', 'error'].includes(status)) throw new Error('API Key 测试状态不正确');
+  if (!getApiKey(settings, id)) throw new Error('API Key 不存在');
+  return {
+    ...settings,
+    apiKeys: settings.apiKeys.map((item) => item.id === id ? {
+      ...item,
+      testStatus: status,
+      testMessage: String(message || '').slice(0, 240),
+      testedAt,
+      testQuota: quota,
+    } : item),
+  };
+}
+
 export function publicApiKeySettings(settings) {
   return {
     activeApiKeyId: settings.activeApiKeyId,
-    apiKeys: settings.apiKeys.map(({ id, label, key, source, createdAt, lastUsedAt }) => ({
-      id, label, hint: maskApiKey(key), source, createdAt, lastUsedAt, active: id === settings.activeApiKeyId,
+    apiKeys: settings.apiKeys.map(({ id, label, key, source, createdAt, lastUsedAt, testStatus, testMessage, testedAt, testQuota }) => ({
+      id, label, hint: maskApiKey(key), source, createdAt, lastUsedAt,
+      testStatus: testStatus || 'untested', testMessage: testMessage || '', testedAt: testedAt || null,
+      testQuota: testQuota || null, active: id === settings.activeApiKeyId,
     })),
   };
 }
@@ -98,7 +119,9 @@ export function saveApiKeySettings(file, settings) {
   const temporaryFile = `${file}.tmp`;
   const apiKeys = settings.apiKeys
     .filter((item) => item.source !== 'environment')
-    .map(({ id, label, key, createdAt, lastUsedAt }) => ({ id, label, key, createdAt, lastUsedAt }));
+    .map(({ id, label, key, createdAt, lastUsedAt, testStatus, testMessage, testedAt, testQuota }) => ({
+      id, label, key, createdAt, lastUsedAt, testStatus, testMessage, testedAt, testQuota,
+    }));
   fs.writeFileSync(temporaryFile, JSON.stringify({ apiKeys, activeApiKeyId: settings.activeApiKeyId }, null, 2), { mode: 0o600 });
   fs.renameSync(temporaryFile, file);
 }

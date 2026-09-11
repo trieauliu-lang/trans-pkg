@@ -339,6 +339,7 @@ export default function App() {
   const [loadingApiKeys, setLoadingApiKeys] = useState(false);
   const [savingApiKey, setSavingApiKey] = useState(false);
   const [switchingApiKeyId, setSwitchingApiKeyId] = useState(null);
+  const [testingApiKeyId, setTestingApiKeyId] = useState(null);
   const audioRef = useRef(null);
   const audioContextRef = useRef(null);
   const customAudioUrlRef = useRef('');
@@ -454,6 +455,22 @@ export default function App() {
       showToast(error.message);
     } finally {
       setSwitchingApiKeyId(null);
+    }
+  }
+
+  async function testApiKey(id) {
+    setTestingApiKeyId(id);
+    try {
+      const response = await fetch(`/api/settings/api-keys/${encodeURIComponent(id)}/test`, { method: 'POST' });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || 'API Key 测试失败');
+      setHealth(body);
+      setApiKeys(body.apiKeys || []);
+      showToast(body.test?.ok ? `测试成功${body.test.quota?.remaining != null ? `，今日剩余 ${body.test.quota.remaining}/${body.test.quota.limit}` : ''}` : body.test?.message || 'API Key 测试失败');
+    } catch (error) {
+      showToast(error.message);
+    } finally {
+      setTestingApiKeyId(null);
     }
   }
 
@@ -626,7 +643,7 @@ export default function App() {
         <a className="brand" href="#top" aria-label="比分提醒首页"><span className="brand__mark"><Activity size={19} /></span><span>比分提醒</span></a>
         <nav className="topbar__nav" aria-label="页面导航"><a href="#fixtures">比赛</a><a href="#tasks">任务</a></nav>
         <div className="topbar__actions">
-          <button className={`api-state ${health.apiConfigured ? 'api-state--live' : ''}`} onClick={openApiKeySettings} title="管理和切换 API-Football Key"><KeyRound size={16} /><span>{health.apiConfigured ? `API ${health.apiKeyHint || '已配置'}${health.apiKeyCount > 1 ? ` · ${health.apiKeyCount} 个` : ''}` : '导入 API Key'}</span></button>
+          <button className={`api-state ${health.activeApiKeyStatus === 'error' ? 'api-state--error' : health.apiConfigured ? 'api-state--live' : ''}`} onClick={openApiKeySettings} title="管理、测试和切换 API-Football Key">{health.activeApiKeyStatus === 'error' ? <Zap size={16} /> : <KeyRound size={16} />}<span>{health.apiConfigured ? `API ${health.apiKeyHint || '已配置'}${health.activeApiKeyStatus === 'error' ? ' · 异常' : ''}${health.apiKeyCount > 1 ? ` · ${health.apiKeyCount} 个` : ''}` : '导入 API Key'}</span></button>
           <button className={`sound-control ${soundEnabled ? 'sound-control--on' : ''}`} onClick={() => enableSound(true)}><Volume2 size={17} />{soundEnabled ? '声音已启用' : '启用声音'}</button>
           <button className="button button--primary button--small" onClick={() => setDrawerOpen(true)}><Plus size={17} />新建监控</button>
         </div>
@@ -695,7 +712,7 @@ export default function App() {
 
       {drawerOpen && <CreateTaskPanel fixtures={fixtures} selectedIds={selectedIds} setSelectedIds={setSelectedIds} monitorDate={date} translations={teamTranslations} onClose={() => setDrawerOpen(false)} onError={showToast} onArmSound={() => enableSound(false)} onCreated={(task) => { setDrawerOpen(false); setSelectedIds([]); setActiveTaskId(task.id); loadTasks(); showToast('监控任务已创建，声音提醒已启用'); }} />}
 
-      {apiKeyOpen && <div className="alert-overlay" onMouseDown={(event) => event.target === event.currentTarget && setApiKeyOpen(false)}><form className="alert-dialog api-key-dialog" onSubmit={importApiKey}><span className="alert-dialog__icon"><KeyRound size={30} /></span><p className="section-caption">API 设置</p><h2>管理 API Key</h2><p>每次导入都会缓存在本机。页面只显示名称和末四位，可随时切换当前使用的 Key。</p>{loadingApiKeys ? <div className="api-key-list__loading"><LoaderCircle className="spin" size={18} />正在读取…</div> : apiKeys.length > 0 && <div className="api-key-list" role="list">{apiKeys.map((item) => <button type="button" role="listitem" key={item.id} className={`api-key-item ${item.active ? 'api-key-item--active' : ''}`} onClick={() => switchApiKey(item.id)} disabled={Boolean(switchingApiKeyId)}><span><strong>{item.label}</strong><small>{item.hint}{item.source === 'environment' ? ' · 环境变量' : ' · 本机保存'}</small></span>{item.active ? <em><Check size={14} />使用中</em> : switchingApiKeyId === item.id ? <LoaderCircle className="spin" size={16} /> : <em>切换</em>}</button>)}</div>}<div className="api-key-form"><label className="field"><span>名称（可选）</span><input maxLength="40" value={apiKeyLabel} onChange={(event) => setApiKeyLabel(event.target.value)} placeholder="例如：主要账号" /></label><label className="field"><span>新增 API-Football Key</span><input type="password" autoComplete="off" value={apiKeyValue} onChange={(event) => setApiKeyValue(event.target.value)} placeholder="粘贴新的 API Key" /></label></div><div className="api-key-dialog__actions"><button type="button" className="button button--ghost" onClick={() => setApiKeyOpen(false)}>完成</button><button className="button button--primary" disabled={savingApiKey || !apiKeyValue.trim()}>{savingApiKey ? <LoaderCircle className="spin" size={17} /> : <KeyRound size={17} />}保存并启用</button></div></form></div>}
+      {apiKeyOpen && <div className="alert-overlay" onMouseDown={(event) => event.target === event.currentTarget && setApiKeyOpen(false)}><form className="alert-dialog api-key-dialog" onSubmit={importApiKey}><span className="alert-dialog__icon"><KeyRound size={30} /></span><p className="section-caption">API 设置</p><h2>管理 API Key</h2><p>导入的 Key 会保存在本机。测试会消耗一次 API 请求；异常 Key 将显示为红色。</p>{loadingApiKeys ? <div className="api-key-list__loading"><LoaderCircle className="spin" size={18} />正在读取…</div> : apiKeys.length > 0 && <div className="api-key-list" role="list">{apiKeys.map((item) => <div role="listitem" key={item.id} className={`api-key-item ${item.active ? 'api-key-item--active' : ''} ${item.testStatus === 'error' ? 'api-key-item--error' : ''}`}><button type="button" className="api-key-item__select" onClick={() => switchApiKey(item.id)} disabled={Boolean(switchingApiKeyId || testingApiKeyId)}><span><strong>{item.label}</strong><small>{item.hint}{item.source === 'environment' ? ' · 环境变量' : ' · 本机保存'}</small><small className={`api-key-item__health api-key-item__health--${item.testStatus}`}>{item.testStatus === 'healthy' ? `连接正常${item.testQuota?.remaining != null ? ` · 剩余 ${item.testQuota.remaining}/${item.testQuota.limit}` : ''}` : item.testStatus === 'error' ? `连接异常 · ${item.testMessage}` : '尚未测试'}</small></span>{item.active ? <em><Check size={14} />使用中</em> : switchingApiKeyId === item.id ? <LoaderCircle className="spin" size={16} /> : <em>切换</em>}</button><button type="button" className="api-key-item__test" onClick={() => testApiKey(item.id)} disabled={Boolean(testingApiKeyId || switchingApiKeyId)}>{testingApiKeyId === item.id ? <LoaderCircle className="spin" size={14} /> : <Activity size={14} />}测试</button></div>)}</div>}<div className="api-key-form"><label className="field"><span>名称（可选）</span><input maxLength="40" value={apiKeyLabel} onChange={(event) => setApiKeyLabel(event.target.value)} placeholder="例如：主要账号" /></label><label className="field"><span>新增 API-Football Key</span><input type="password" autoComplete="off" value={apiKeyValue} onChange={(event) => setApiKeyValue(event.target.value)} placeholder="粘贴新的 API Key" /></label></div><div className="api-key-dialog__actions"><button type="button" className="button button--ghost" onClick={() => setApiKeyOpen(false)}>完成</button><button className="button button--primary" disabled={savingApiKey || !apiKeyValue.trim()}>{savingApiKey ? <LoaderCircle className="spin" size={17} /> : <KeyRound size={17} />}保存并启用</button></div></form></div>}
 
       {alertTask && <div className="alert-overlay"><div className="alert-dialog"><span className="alert-dialog__icon"><BellRing size={32} /></span><p className="section-caption">监控提醒</p><h2>比分条件已达成</h2><p>{alertTask.lastMessage}</p><button className="button button--primary" onClick={() => { if (audioRef.current) audioRef.current.pause(); setAlertTask(null); }}>收到，停止提醒</button></div></div>}
       {toast && <div className="toast"><Check size={16} />{toast}</div>}

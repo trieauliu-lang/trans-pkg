@@ -7,8 +7,8 @@ import { evaluateTask } from './rules.js';
 import { createFootballClient, retryDelay } from './footballClient.js';
 import { createFixtureCache } from './fixtureCache.js';
 import {
-  activateApiKey, addApiKey, getActiveApiKey, maskApiKey,
-  publicApiKeySettings, readApiKeySettings, saveApiKeySettings,
+  activateApiKey, addApiKey, getActiveApiKey, getApiKey, maskApiKey,
+  publicApiKeySettings, readApiKeySettings, saveApiKeySettings, updateApiKeyTest,
 } from './apiKeySettings.js';
 import { getKnownTeamTranslations, translateTeamNames } from './teamTranslations.js';
 import { normalizeTaskSettings, validateTask } from './taskSettings.js';
@@ -106,12 +106,15 @@ function fixtureCacheKey(date, timezone = 'Asia/Shanghai') {
 }
 
 function healthPayload() {
+  const activeProfile = getApiKey(apiKeySettings, apiKeySettings.activeApiKeyId);
   return {
     ok: true,
     apiConfigured: Boolean(apiKey),
     apiKeyHint: maskApiKey(apiKey),
     activeApiKeyId: apiKeySettings.activeApiKeyId,
     apiKeyCount: apiKeySettings.apiKeys.length,
+    activeApiKeyStatus: activeProfile?.testStatus || 'untested',
+    activeApiKeyTestedAt: activeProfile?.testedAt || null,
     mode: apiKey ? 'live' : 'demo',
     liveCacheSeconds,
     quotaReserve,
@@ -241,6 +244,28 @@ app.post('/api/settings/api-keys/:id/activate', (request, response) => {
     response.json(apiKeyPayload());
   } catch (error) {
     response.status(404).json({ error: error.message });
+  }
+});
+
+app.post('/api/settings/api-keys/:id/test', async (request, response) => {
+  const profile = getApiKey(apiKeySettings, request.params.id);
+  if (!profile) return response.status(404).json({ error: 'API Key 不存在' });
+  try {
+    const result = await createFootballClient({ apiKey: profile.key })('timezone');
+    apiKeySettings = updateApiKeyTest(apiKeySettings, profile.id, {
+      status: 'healthy',
+      message: '连接正常',
+      quota: result.quota,
+    });
+    saveApiKeySettings(settingsFile, apiKeySettings);
+    response.json({ ...apiKeyPayload(), test: { ok: true, message: '连接正常', quota: result.quota } });
+  } catch (error) {
+    apiKeySettings = updateApiKeyTest(apiKeySettings, profile.id, {
+      status: 'error',
+      message: error.message,
+    });
+    saveApiKeySettings(settingsFile, apiKeySettings);
+    response.json({ ...apiKeyPayload(), test: { ok: false, message: error.message, code: error.code || 'UNKNOWN' } });
   }
 });
 

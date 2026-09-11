@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   activateApiKey, addApiKey, getActiveApiKey, maskApiKey, normalizeApiKey,
-  publicApiKeySettings, readApiKeySettings, saveApiKeySettings,
+  publicApiKeySettings, readApiKeySettings, saveApiKeySettings, updateApiKeyTest,
 } from './apiKeySettings.js';
 
 test('normalizes and masks an API key without exposing it', () => {
@@ -29,6 +29,12 @@ test('adds, deduplicates, names and switches cached keys', () => {
   settings = activateApiKey(settings, secondId);
   assert.equal(getActiveApiKey(settings), 'second-secret-2222');
   assert.throws(() => activateApiKey(settings, 'missing'), /不存在/);
+  settings = updateApiKeyTest(settings, secondId, {
+    status: 'error', message: '比分服务拒绝访问', quota: { remaining: '0', limit: '100' },
+  });
+  const tested = publicApiKeySettings(settings).apiKeys.find((item) => item.id === secondId);
+  assert.equal(tested.testStatus, 'error');
+  assert.equal(tested.testQuota.remaining, '0');
 });
 
 test('saves multiple keys, migrates legacy data and never exposes full values publicly', () => {
@@ -39,6 +45,9 @@ test('saves multiple keys, migrates legacy data and never exposes full values pu
     let settings = readApiKeySettings(file, 'environment-secret-9999');
     assert.equal(settings.apiKeys.length, 2);
     settings = addApiKey(settings, 'new-secret-1234', '新 Key');
+    settings = updateApiKeyTest(settings, settings.activeApiKeyId, {
+      status: 'healthy', message: '连接正常', quota: { remaining: '88', limit: '100' },
+    });
     saveApiKeySettings(file, settings);
     const savedText = fs.readFileSync(file, 'utf8');
     assert.ok(savedText.includes('legacy-secret-0000'));
@@ -47,6 +56,10 @@ test('saves multiple keys, migrates legacy data and never exposes full values pu
     const publicValue = JSON.stringify(publicApiKeySettings(settings));
     assert.ok(publicValue.includes('••••1234'));
     assert.ok(!publicValue.includes('new-secret-1234'));
+    const reloaded = readApiKeySettings(file);
+    const active = publicApiKeySettings(reloaded).apiKeys.find((item) => item.active);
+    assert.equal(active.testStatus, 'healthy');
+    assert.equal(active.testQuota.remaining, '88');
     assert.ok(!fs.existsSync(`${file}.tmp`));
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
