@@ -10,6 +10,7 @@ import {
   Clock3,
   CloudCog,
   Headphones,
+  KeyRound,
   ListFilter,
   LoaderCircle,
   Music2,
@@ -315,13 +316,14 @@ export default function App() {
   const [tasks, setTasks] = useState([]);
   const [fixtures, setFixtures] = useState([]);
   const [fixtureMeta, setFixtureMeta] = useState({ cache: null, quota: null });
+  const [hasQueriedFixtures, setHasQueriedFixtures] = useState(false);
   const [activeTaskId, setActiveTaskId] = useState(null);
   const [selectedIds, setSelectedIds] = useState([]);
   const [date, setDate] = useState(localDateValue());
   const [regionFilter, setRegionFilter] = useState('all');
   const [fixtureSearch, setFixtureSearch] = useState('');
   const [visibleCount, setVisibleCount] = useState(24);
-  const [loadingFixtures, setLoadingFixtures] = useState(true);
+  const [loadingFixtures, setLoadingFixtures] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(false);
   const [audioUrl, setAudioUrl] = useState(DEFAULT_AUDIO_URL);
@@ -330,6 +332,9 @@ export default function App() {
   const [alertTask, setAlertTask] = useState(null);
   const [toast, setToast] = useState('');
   const [teamTranslations, setTeamTranslations] = useState({});
+  const [apiKeyOpen, setApiKeyOpen] = useState(false);
+  const [apiKeyValue, setApiKeyValue] = useState('');
+  const [savingApiKey, setSavingApiKey] = useState(false);
   const audioRef = useRef(null);
   const audioContextRef = useRef(null);
   const customAudioUrlRef = useRef('');
@@ -367,12 +372,47 @@ export default function App() {
       if (!response.ok) throw new Error(body.error || '赛程加载失败');
       setFixtures(body.fixtures);
       setFixtureMeta({ cache: body.cache || null, quota: body.quota || null });
+      setHasQueriedFixtures(true);
       if (body.cache?.quotaProtected) showToast('每日额度已进入保留区，赛事列表暂用缓存；监控任务仍可查询');
       else if (body.cache?.stale) showToast('比分服务暂时不可用，当前显示最近一次缓存');
     } catch (error) {
       showToast(error.message);
     } finally {
       setLoadingFixtures(false);
+    }
+  }
+
+  function chooseDate(value) {
+    setDate(value);
+    setFixtures([]);
+    setSelectedIds([]);
+    setFixtureMeta({ cache: null, quota: null });
+    setHasQueriedFixtures(false);
+  }
+
+  async function importApiKey(event) {
+    event.preventDefault();
+    setSavingApiKey(true);
+    try {
+      const response = await fetch('/api/settings/api-key', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ apiKey: apiKeyValue }),
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || 'API Key 导入失败');
+      setHealth(body);
+      setApiKeyValue('');
+      setApiKeyOpen(false);
+      setFixtures([]);
+      setSelectedIds([]);
+      setFixtureMeta({ cache: null, quota: null });
+      setHasQueriedFixtures(false);
+      showToast(`API Key ${body.apiKeyHint} 已保存，请点击“查询比赛”验证`);
+    } catch (error) {
+      showToast(error.message);
+    } finally {
+      setSavingApiKey(false);
     }
   }
 
@@ -476,7 +516,6 @@ export default function App() {
     };
   }, []);
 
-  useEffect(() => { loadFixtures(); }, [date]);
   useEffect(() => { setVisibleCount(24); }, [date, regionFilter, fixtureSearch]);
 
   useEffect(() => {
@@ -546,7 +585,7 @@ export default function App() {
         <a className="brand" href="#top" aria-label="比分提醒首页"><span className="brand__mark"><Activity size={19} /></span><span>比分提醒</span></a>
         <nav className="topbar__nav" aria-label="页面导航"><a href="#fixtures">比赛</a><a href="#tasks">任务</a></nav>
         <div className="topbar__actions">
-          <div className={`api-state ${health.apiConfigured ? 'api-state--live' : ''}`}><CloudCog size={16} /><span>{health.apiConfigured ? '真实 API 已连接' : '演示模式'}</span></div>
+          <button className={`api-state ${health.apiConfigured ? 'api-state--live' : ''}`} onClick={() => setApiKeyOpen(true)} title="导入或更新 API-Football Key"><KeyRound size={16} /><span>{health.apiConfigured ? `API ${health.apiKeyHint || '已配置'}` : '导入 API Key'}</span></button>
           <button className={`sound-control ${soundEnabled ? 'sound-control--on' : ''}`} onClick={() => enableSound(true)}><Volume2 size={17} />{soundEnabled ? '声音已启用' : '启用声音'}</button>
           <button className="button button--primary button--small" onClick={() => setDrawerOpen(true)}><Plus size={17} />新建监控</button>
         </div>
@@ -591,11 +630,11 @@ export default function App() {
                 <div className="date-shortcuts">
                   {[0, 1, 2].map((days) => {
                     const value = shiftedDateValue(days);
-                    return <button key={value} className={date === value ? 'is-active' : ''} onClick={() => setDate(value)}>{['今天', '明天', '后天'][days]}</button>;
+                    return <button key={value} className={date === value ? 'is-active' : ''} onClick={() => chooseDate(value)}>{['今天', '明天', '后天'][days]}</button>;
                   })}
                 </div>
-                <label className="date-picker"><CalendarDays size={16} /><input type="date" min={localDateValue()} value={date} onChange={(event) => setDate(event.target.value)} /></label>
-                <button className="icon-button" onClick={loadFixtures} aria-label="刷新赛程" title="优先读取服务端缓存，不会在每次点击时消耗额度"><RefreshCw size={17} className={loadingFixtures ? 'spin' : ''} /></button>
+                <label className="date-picker"><CalendarDays size={16} /><input type="date" min={localDateValue()} value={date} onChange={(event) => chooseDate(event.target.value)} /></label>
+                <button className="button button--secondary button--small" onClick={loadFixtures} disabled={loadingFixtures} title="仅点击此按钮时查询；优先读取服务端缓存"><RefreshCw size={16} className={loadingFixtures ? 'spin' : ''} />查询比赛</button>
               </div>
             </div>
             <div className="filter-row">
@@ -605,7 +644,7 @@ export default function App() {
               <label className="fixture-search"><Search size={14} /><input value={fixtureSearch} onChange={(event) => setFixtureSearch(event.target.value)} placeholder="搜索球队或联赛" aria-label="搜索球队或联赛" /></label>
               <span>{selectedIds.length} 场已选择</span>
             </div>
-            {loadingFixtures ? <div className="loading-state"><LoaderCircle className="spin" /><span>正在加载赛程…</span></div> : visibleFixtures.length ? <><div className="fixture-grid">{displayedFixtures.map((fixture) => <MatchCard key={fixture.fixture.id} fixture={fixture} translations={teamTranslations} selected={selectedIds.includes(fixture.fixture.id)} onToggle={toggleFixture} />)}</div>{visibleCount < visibleFixtures.length && <button className="load-more" onClick={() => setVisibleCount((count) => count + 24)}>显示更多比赛（剩余 {visibleFixtures.length - visibleCount} 场）</button>}</> : <div className="loading-state"><Search /><span>没有找到符合条件的比赛</span></div>}
+            {loadingFixtures ? <div className="loading-state"><LoaderCircle className="spin" /><span>正在查询比赛…</span></div> : visibleFixtures.length ? <><div className="fixture-grid">{displayedFixtures.map((fixture) => <MatchCard key={fixture.fixture.id} fixture={fixture} translations={teamTranslations} selected={selectedIds.includes(fixture.fixture.id)} onToggle={toggleFixture} />)}</div>{visibleCount < visibleFixtures.length && <button className="load-more" onClick={() => setVisibleCount((count) => count + 24)}>显示更多比赛（剩余 {visibleFixtures.length - visibleCount} 场）</button>}</> : <div className="loading-state"><Search /><span>{hasQueriedFixtures ? '没有找到符合条件的比赛' : '选择日期后点击“查询比赛”，页面不会自动消耗 API 额度'}</span></div>}
             {selectedIds.length > 0 && <div className="selection-bar"><div><Check size={17} /><span>已锁定 <strong>{selectedIds.length}</strong> 场目标</span></div><button className="button button--primary button--small" onClick={() => setDrawerOpen(true)}>配置规则<ChevronRight size={16} /></button></div>}
           </div>
         </section>
@@ -614,6 +653,8 @@ export default function App() {
       </main>
 
       {drawerOpen && <CreateTaskPanel fixtures={fixtures} selectedIds={selectedIds} setSelectedIds={setSelectedIds} monitorDate={date} translations={teamTranslations} onClose={() => setDrawerOpen(false)} onError={showToast} onArmSound={() => enableSound(false)} onCreated={(task) => { setDrawerOpen(false); setSelectedIds([]); setActiveTaskId(task.id); loadTasks(); showToast('监控任务已创建，声音提醒已启用'); }} />}
+
+      {apiKeyOpen && <div className="alert-overlay" onMouseDown={(event) => event.target === event.currentTarget && setApiKeyOpen(false)}><form className="alert-dialog api-key-dialog" onSubmit={importApiKey}><span className="alert-dialog__icon"><KeyRound size={30} /></span><p className="section-caption">API 设置</p><h2>{health.apiConfigured ? '更新 API Key' : '导入 API Key'}</h2><p>Key 只保存在运行服务的本机 data/settings.json，不会显示在页面或提交到 Git。</p><label className="field"><span>API-Football Key</span><input type="password" autoComplete="off" autoFocus value={apiKeyValue} onChange={(event) => setApiKeyValue(event.target.value)} placeholder={health.apiKeyHint || '粘贴 API Key'} /></label><div className="api-key-dialog__actions"><button type="button" className="button button--ghost" onClick={() => setApiKeyOpen(false)}>取消</button><button className="button button--primary" disabled={savingApiKey || !apiKeyValue.trim()}>{savingApiKey ? <LoaderCircle className="spin" size={17} /> : <KeyRound size={17} />}保存并启用</button></div></form></div>}
 
       {alertTask && <div className="alert-overlay"><div className="alert-dialog"><span className="alert-dialog__icon"><BellRing size={32} /></span><p className="section-caption">监控提醒</p><h2>比分条件已达成</h2><p>{alertTask.lastMessage}</p><button className="button button--primary" onClick={() => { if (audioRef.current) audioRef.current.pause(); setAlertTask(null); }}>收到，停止提醒</button></div></div>}
       {toast && <div className="toast"><Check size={16} />{toast}</div>}

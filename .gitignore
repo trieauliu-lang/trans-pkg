@@ -3,6 +3,7 @@ dist/
 .env
 data/tasks.json
 data/fixtures-cache.json
+data/settings.json
 data/team-translations.json
 *.log
 .DS_Store

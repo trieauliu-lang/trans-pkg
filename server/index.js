@@ -6,6 +6,7 @@ import crypto from 'node:crypto';
 import { evaluateTask } from './rules.js';
 import { createFootballClient, retryDelay } from './footballClient.js';
 import { createFixtureCache } from './fixtureCache.js';
+import { maskApiKey, normalizeApiKey, readSavedApiKey, saveApiKey } from './apiKeySettings.js';
 import { getKnownTeamTranslations, translateTeamNames } from './teamTranslations.js';
 import { normalizeTaskSettings, validateTask } from './taskSettings.js';
 
@@ -14,8 +15,11 @@ const rootDir = path.resolve(__dirname, '..');
 const dataDir = path.join(rootDir, 'data');
 const tasksFile = path.join(dataDir, 'tasks.json');
 const fixturesCacheFile = path.join(dataDir, 'fixtures-cache.json');
+const settingsFile = path.join(dataDir, 'settings.json');
 const port = Number(process.env.PORT || 8787);
-const apiKey = process.env.API_FOOTBALL_KEY || '';
+const environmentApiKey = process.env.API_FOOTBALL_KEY || '';
+let apiKey = readSavedApiKey(settingsFile)
+  || (environmentApiKey && environmentApiKey !== 'replace_with_your_api_key' ? environmentApiKey : '');
 const liveCacheSeconds = Math.max(60, Number(process.env.API_FOOTBALL_LIVE_CACHE_SECONDS) || 300);
 const quotaReserve = Math.max(0, Number(process.env.API_FOOTBALL_QUOTA_RESERVE) || 10);
 const app = express();
@@ -69,7 +73,7 @@ function broadcast(event, payload) {
   clients.forEach((client) => client.write(message));
 }
 
-const footballRequest = createFootballClient({ apiKey });
+let footballRequest = createFootballClient({ apiKey });
 
 function readFixtureCache() {
   try { return JSON.parse(fs.readFileSync(fixturesCacheFile, 'utf8')); } catch { return {}; }
@@ -80,15 +84,19 @@ function saveFixtureCache(value) {
   fs.writeFileSync(fixturesCacheFile, JSON.stringify(value));
 }
 
-const fixtureCache = createFixtureCache({
-  initial: readFixtureCache(),
-  liveTtlMs: liveCacheSeconds * 1000,
-  persist: saveFixtureCache,
-  loader: async (key) => {
-    const [date, timezone] = key.split('|');
-    return footballRequest('fixtures', { date, timezone });
-  },
-});
+function buildFixtureCache(initial = readFixtureCache()) {
+  return createFixtureCache({
+    initial,
+    liveTtlMs: liveCacheSeconds * 1000,
+    persist: saveFixtureCache,
+    loader: async (key) => {
+      const [date, timezone] = key.split('|');
+      return footballRequest('fixtures', { date, timezone });
+    },
+  });
+}
+
+let fixtureCache = buildFixtureCache();
 
 function fixtureCacheKey(date, timezone = 'Asia/Shanghai') {
   return `${date}|${timezone}`;
@@ -171,7 +179,30 @@ setInterval(() => {
 }, 5_000);
 
 app.get('/api/health', (_request, response) => {
-  response.json({ ok: true, apiConfigured: Boolean(apiKey), mode: apiKey ? 'live' : 'demo', liveCacheSeconds, quotaReserve });
+  response.json({ ok: true, apiConfigured: Boolean(apiKey), apiKeyHint: maskApiKey(apiKey), mode: apiKey ? 'live' : 'demo', liveCacheSeconds, quotaReserve });
+});
+
+app.post('/api/settings/api-key', (request, response) => {
+  try {
+    apiKey = saveApiKey(settingsFile, normalizeApiKey(request.body?.apiKey));
+    footballRequest = createFootballClient({ apiKey });
+    fixtureCache = buildFixtureCache({});
+    saveFixtureCache({});
+    tasks.forEach((task) => {
+      if (task.status !== 'error') return;
+      task.revision = (task.revision || 0) + 1;
+      task.status = 'running';
+      task.nextCheckAt = new Date().toISOString();
+      task.error = null;
+      task.errorCode = null;
+      task.lastMessage = 'API Key 已更新，等待重新检查';
+    });
+    saveTasks();
+    broadcast('tasks-updated', tasks);
+    response.json({ ok: true, apiConfigured: true, apiKeyHint: maskApiKey(apiKey), mode: 'live', liveCacheSeconds, quotaReserve });
+  } catch (error) {
+    response.status(400).json({ error: error.message });
+  }
 });
 
 app.get('/api/fixtures', async (request, response) => {

@@ -121,7 +121,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
   color: var(--muted-bright);
   font-size: 12px;
 }
-.api-state { color: var(--amber); background: var(--amber-soft); border-color: var(--amber-state-line); }
+.api-state { color: var(--amber); background: var(--amber-soft); border-color: var(--amber-state-line); cursor: pointer; }
+.api-state:hover { filter: brightness(.98); }
 .api-state--live { color: var(--green); background: var(--green-soft); border-color: var(--green-line); }
 .sound-control { cursor: pointer; }
 .sound-control:hover { border-color: var(--line-strong); color: var(--ink); }
@@ -376,6 +377,10 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
 .alert-dialog h2 { margin: 5px 0 7px; font-family: var(--font-display); font-size: 27px; }
 .alert-dialog > p:not(.section-caption) { margin: 0 0 20px; color: var(--muted-bright); font-size: 11px; }
 .alert-dialog .button { width: 100%; }
+.api-key-dialog { text-align: left; }
+.api-key-dialog .alert-dialog__icon, .api-key-dialog .section-caption, .api-key-dialog h2 { text-align: center; }
+.api-key-dialog .field { margin: 16px 0; }
+.api-key-dialog__actions { display: grid; grid-template-columns: .7fr 1.3fr; gap: 8px; }
 .toast { position: fixed; z-index: 100; right: 20px; bottom: 20px; display: flex; align-items: center; gap: 7px; padding: 11px 14px; border: 1px solid var(--green-line); border-radius: 8px; background: var(--green-soft); color: var(--green); box-shadow: var(--shadow); font-size: 11px; animation: toast-in .2s ease both; }
 
 .spin { animation: spin .9s linear infinite; }
@@ -398,7 +403,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
   .brand { padding: 0 14px; border-right: 0; }
   .topbar__nav { justify-content: center; padding: 0; }
   .topbar__actions { padding-right: 10px; }
-  .api-state { display: none; }
+  .api-state span { display: none; }
+  .api-state { padding: 0 9px; }
   .sidebar { position: static; height: auto; padding: 10px 12px; border-right: 0; border-bottom: 1px solid var(--line); }
   .sidebar__label, .sound-card { display: none; }
   .task-list { flex-direction: row; overflow-x: auto; }
