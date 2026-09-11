@@ -126,8 +126,8 @@ function MatchCard({ fixture, selected, onToggle, compact = false, translations 
   const finished = FINISHED.has(fixture.fixture.status.short);
   const homeOriginal = fixture.teams.home.name;
   const awayOriginal = fixture.teams.away.name;
-  const homeName = fixture.teams.home.zhName || translations[homeOriginal] || homeOriginal;
-  const awayName = fixture.teams.away.zhName || translations[awayOriginal] || awayOriginal;
+  const homeName = translations[homeOriginal] || homeOriginal;
+  const awayName = translations[awayOriginal] || awayOriginal;
   return (
     <button
       type="button"

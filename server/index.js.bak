@@ -14,21 +14,6 @@ import {
 import { getKnownTeamTranslations, translateTeamNames } from './teamTranslations.js';
 import { normalizeTaskSettings, validateTask } from './taskSettings.js';
 
-// ===== football-team-names-zh 队名归一化 =====
-import * as teamNamePkg from 'football-team-names-zh';
-const normalizeTeam =
-  teamNamePkg.normalizeTeam || teamNamePkg.default || (() => null);
-
-function getTeamChineseName(team) {
-  if (!team || !team.name) return '';
-  try {
-    const normalized = normalizeTeam(team.name);
-    return (normalized && (normalized.zh_name || normalized.zhName || normalized.zh)) || team.name;
-  } catch {
-    return team.name;
-  }
-}
-
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, '..');
 const dataDir = path.join(rootDir, 'data');
@@ -307,16 +292,8 @@ app.get('/api/fixtures', async (request, response) => {
       protectQuota: true,
       quotaReserve,
     });
-    const enrichedFixtures = result.data.map((fixture) => ({
-      ...fixture,
-      teams: {
-        ...fixture.teams,
-        home: { ...fixture.teams.home, zhName: getTeamChineseName(fixture.teams.home) },
-        away: { ...fixture.teams.away, zhName: getTeamChineseName(fixture.teams.away) },
-      },
-    }));
     response.json({
-      fixtures: enrichedFixtures,
+      fixtures: result.data,
       mode: 'live',
       quota: result.quota,
       provider: profile.provider,
