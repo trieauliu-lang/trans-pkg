@@ -1,14 +1,22 @@
 // server/tencentTranslator.js
-import tencentcloud from 'tencentcloud-sdk-nodejs-tmt';
+// 用 createRequire 加载 CJS 包，避免 ESM 默认导入拿到错误的构造
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
 
-const TmtClient = tencentcloud.tmt.v20180321.Client;
+let TmtClient = null;
+try {
+  const tencentcloud = require('tencentcloud-sdk-nodejs-tmt');
+  TmtClient = tencentcloud.tmt.v20180321.Client;
+} catch (e) {
+  console.error('[i18n] 加载腾讯云 SDK 失败:', e.message);
+}
 
 let client = null;
 function getClient() {
   if (client) return client;
   const secretId = process.env.TENCENT_SECRET_ID;
   const secretKey = process.env.TENCENT_SECRET_KEY;
-  if (!secretId || !secretKey) return null;
+  if (!secretId || !secretKey || !TmtClient) return null;
   client = new TmtClient({
     credential: { secretId, secretKey },
     region: 'ap-guangzhou',
@@ -30,7 +38,6 @@ export async function translateToChinese(text) {
 
   const c = getClient();
   if (!c) {
-    console.warn('[i18n] 未配置 TENCENT_SECRET_ID / TENCENT_SECRET_KEY，跳过翻译');
     return text;
   }
 
