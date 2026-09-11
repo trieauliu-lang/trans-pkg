@@ -14,20 +14,33 @@ import {
 import { getKnownTeamTranslations, translateTeamNames } from './teamTranslations.js';
 import { normalizeTaskSettings, validateTask } from './taskSettings.js';
 
-// ===== football-team-names-zh 队名归一化 =====
+// ===== 队名中文翻译：本地覆盖 → 库归一化 → 腾讯翻译 =====
 import * as teamNamePkg from 'football-team-names-zh';
-const normalizeTeam =
-  teamNamePkg.normalizeTeam || teamNamePkg.default || (() => null);
+import { TEAM_NAME_OVERRIDES } from './teamNameOverrides.js';
+import { translateToChinese } from './tencentTranslator.js';
 
-function getTeamChineseName(team) {
+const normalizeTeam = teamNamePkg.normalizeTeam || teamNamePkg.default || (() => null);
+
+async function getTeamChineseName(team) {
   if (!team || !team.name) return '';
+
+  // 1. 自定义覆盖表
+  const override = TEAM_NAME_OVERRIDES[team.name];
+  if (override) return override;
+
+  // 2. football-team-names-zh
   try {
     const normalized = normalizeTeam(team.name);
-    return (normalized && (normalized.zh_name || normalized.zhName || normalized.zh)) || team.name;
-  } catch {
-    return team.name;
-  }
+    if (normalized) {
+      const zh = normalized.zh_name || normalized.zhName || normalized.zh;
+      if (zh) return zh;
+    }
+  } catch { /* ignore */ }
+
+  // 3. 腾讯翻译兜底
+  return await translateToChinese(team.name);
 }
+
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, '..');
@@ -307,14 +320,16 @@ app.get('/api/fixtures', async (request, response) => {
       protectQuota: true,
       quotaReserve,
     });
-    const enrichedFixtures = result.data.map((fixture) => ({
-      ...fixture,
-      teams: {
-        ...fixture.teams,
-        home: { ...fixture.teams.home, zhName: getTeamChineseName(fixture.teams.home) },
-        away: { ...fixture.teams.away, zhName: getTeamChineseName(fixture.teams.away) },
-      },
-    }));
+    const enrichedFixtures = await Promise.all(
+      result.data.map(async (fixture) => ({
+        ...fixture,
+        teams: {
+          ...fixture.teams,
+          home: { ...fixture.teams.home, zhName: await getTeamChineseName(fixture.teams.home) },
+          away: { ...fixture.teams.away, zhName: await getTeamChineseName(fixture.teams.away) },
+        },
+      }))
+    );
     response.json({
       fixtures: enrichedFixtures,
       mode: 'live',
