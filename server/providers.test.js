@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createProviderClient, normalizeTheStatsMatch } from './providers.js';
+import { createProviderClient, normalizeTheSportsDbEvent, normalizeTheStatsMatch } from './providers.js';
 
 test('normalizes TheStatsAPI fixture variants to the shared format', () => {
   const fixture = normalizeTheStatsMatch({
@@ -35,4 +35,44 @@ test('TheStatsAPI uses bearer auth, date filters and pagination', async () => {
 test('TheStatsAPI authentication failures are classified', async () => {
   const client = createProviderClient({ providerId: 'the-stats-api', apiKey: 'bad', dispatcher: {}, fetchImpl: async () => new Response('', { status: 401 }) });
   await assert.rejects(client.test(), { code: 'AUTH' });
+});
+
+test('normalizes TheSportsDB events to the shared fixture format', () => {
+  const fixture = normalizeTheSportsDbEvent({
+    idEvent: '2272541', strSport: 'Soccer', strTimestamp: '2026-09-11T15:00:00',
+    idLeague: '4328', strLeague: 'English Premier League', strCountry: 'England',
+    idHomeTeam: '1', strHomeTeam: 'Home', strHomeTeamBadge: 'home.png',
+    idAwayTeam: '2', strAwayTeam: 'Away', strAwayTeamBadge: 'away.png',
+    intHomeScore: '2', intAwayScore: '1', strStatus: 'In Play', strProgress: '67',
+  });
+  assert.equal(fixture.provider, 'the-sports-db');
+  assert.equal(fixture.fixture.date, '2026-09-11T15:00:00Z');
+  assert.deepEqual(fixture.fixture.status, { short: '2H', long: 'In Play', elapsed: 67 });
+  assert.deepEqual(fixture.goals, { home: 2, away: 1 });
+  assert.equal(fixture.teams.home.logo, 'home.png');
+});
+
+test('TheSportsDB uses the v1 key path and filters daily events to soccer', async () => {
+  const calls = [];
+  const client = createProviderClient({ providerId: 'the-sports-db', apiKey: '123', dispatcher: {}, fetchImpl: async (url, options) => {
+    calls.push({ url, options });
+    return Response.json({ events: [
+      { idEvent: 'football', strSport: 'Soccer', dateEvent: '2026-09-11', strTime: '18:00:00', strHomeTeam: 'A', strAwayTeam: 'B' },
+      { idEvent: 'baseball', strSport: 'Baseball', dateEvent: '2026-09-11', strTime: '19:00:00', strHomeTeam: 'C', strAwayTeam: 'D' },
+    ] });
+  } });
+  const result = await client.fetchFixtures('2026-09-11');
+  assert.equal(result.data.length, 1);
+  assert.equal(result.data[0].fixture.date, '2026-09-11T18:00:00Z');
+  assert.match(calls[0].url.pathname, /\/api\/v1\/json\/123\/eventsday\.php$/);
+  assert.equal(calls[0].url.searchParams.get('d'), '2026-09-11');
+  assert.equal(calls[0].url.searchParams.get('s'), 'Soccer');
+  assert.equal(calls[0].options.headers.Accept, 'application/json');
+});
+
+test('TheSportsDB accepts an empty event day and classifies invalid keys', async () => {
+  const empty = createProviderClient({ providerId: 'the-sports-db', apiKey: '123', dispatcher: {}, fetchImpl: async () => Response.json({ events: null }) });
+  assert.deepEqual((await empty.fetchFixtures('2026-09-11')).data, []);
+  const invalid = createProviderClient({ providerId: 'the-sports-db', apiKey: 'bad', dispatcher: {}, fetchImpl: async () => new Response('', { status: 404 }) });
+  await assert.rejects(invalid.test(), { code: 'AUTH' });
 });

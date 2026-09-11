@@ -4,6 +4,7 @@ import { createFootballClient, FootballError, networkError } from './footballCli
 export const PROVIDERS = {
   'api-football': { id: 'api-football', label: 'API-Football' },
   'the-stats-api': { id: 'the-stats-api', label: 'TheStatsAPI' },
+  'the-sports-db': { id: 'the-sports-db', label: 'TheSportsDB' },
 };
 
 export function normalizeProviderId(value) {
@@ -47,6 +48,58 @@ export function normalizeTheStatsMatch(match) {
       away: { id: away.id || away.team_id || '', name: away.name || '客队待定', logo: away.logo || '' },
     },
     goals: { home: homeScore == null ? null : Number(homeScore), away: awayScore == null ? null : Number(awayScore) },
+  };
+}
+
+const SPORTS_DB_STATUS_MAP = {
+  '': 'NS', NS: 'NS', 'NOT STARTED': 'NS', 'TIME TO BE DEFINED': 'NS', TBD: 'NS',
+  LIVE: 'LIVE', 'IN PLAY': 'LIVE', 'IN PROGRESS': 'LIVE',
+  'MATCH FINISHED': 'FT', FINISHED: 'FT', FINAL: 'FT', FT: 'FT',
+  AOT: 'AET', 'AFTER OVERTIME': 'AET', 'AFTER EXTRA TIME': 'AET',
+  POST: 'PST', POSTPONED: 'PST', 'MATCH POSTPONED': 'PST',
+  CANCELLED: 'CANC', CANCELED: 'CANC', 'MATCH CANCELLED': 'CANC',
+  ABANDONED: 'ABD', SUSPENDED: 'SUSP', INTERRUPTED: 'INT',
+};
+
+function sportsDbDate(event) {
+  const value = event.strTimestamp || (event.dateEvent && `${event.dateEvent}T${event.strTime || '00:00:00'}`);
+  if (!value) return null;
+  const normalized = value.replace(' ', 'T');
+  return /(?:Z|[+-]\d{2}:?\d{2})$/i.test(normalized) ? normalized : `${normalized}Z`;
+}
+
+export function normalizeTheSportsDbEvent(event) {
+  const rawStatus = String(event.strStatus || '').trim();
+  const upperStatus = rawStatus.toUpperCase();
+  const progress = String(event.strProgress || '').trim();
+  const elapsedMatch = progress.match(/\d+/);
+  const elapsed = elapsedMatch ? Number(elapsedMatch[0]) : null;
+  let status = SPORTS_DB_STATUS_MAP[upperStatus] || upperStatus || 'NS';
+  if (String(event.strPostponed || '').toLowerCase() === 'yes') status = 'PST';
+  if (status === 'LIVE') status = elapsed && elapsed <= 45 ? '1H' : '2H';
+  const score = (value) => {
+    if (value == null || value === '') return null;
+    const number = Number(value);
+    return Number.isFinite(number) ? number : null;
+  };
+  return {
+    provider: 'the-sports-db',
+    fixture: {
+      id: event.idEvent,
+      date: sportsDbDate(event),
+      status: { short: status, long: rawStatus || status, elapsed },
+    },
+    league: {
+      id: event.idLeague || '',
+      name: event.strLeague || '未知赛事',
+      country: event.strCountry || '',
+      logo: event.strLeagueBadge || '',
+    },
+    teams: {
+      home: { id: event.idHomeTeam || '', name: event.strHomeTeam || '主队待定', logo: event.strHomeTeamBadge || '' },
+      away: { id: event.idAwayTeam || '', name: event.strAwayTeam || '客队待定', logo: event.strAwayTeamBadge || '' },
+    },
+    goals: { home: score(event.intHomeScore), away: score(event.intAwayScore) },
   };
 }
 
@@ -99,9 +152,59 @@ function createTheStatsApiClient({ apiKey, timeoutMs = 15_000, fetchImpl = fetch
   };
 }
 
+function createTheSportsDbClient({ apiKey, timeoutMs = 15_000, fetchImpl = fetch, dispatcher } = {}) {
+  const agent = dispatcher ?? new EnvHttpProxyAgent();
+  async function request(endpoint, params = {}, collection) {
+    const url = new URL(`https://www.thesportsdb.com/api/v1/json/${encodeURIComponent(apiKey)}/${endpoint}`);
+    Object.entries(params).forEach(([key, value]) => value != null && value !== '' && url.searchParams.set(key, value));
+    try {
+      const response = await fetchImpl(url, {
+        headers: { Accept: 'application/json' }, dispatcher: agent,
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+      if ([401, 403, 404].includes(response.status)) {
+        await response.body?.cancel();
+        throw new FootballError('AUTH', 'TheSportsDB 拒绝访问，请检查 API Key 和订阅状态。');
+      }
+      if (response.status === 429) {
+        await response.body?.cancel();
+        throw new FootballError('RATE_LIMIT', 'TheSportsDB 请求频率已达限制，请稍后重试。');
+      }
+      if (!response.ok) {
+        await response.body?.cancel();
+        throw new FootballError('UPSTREAM', `TheSportsDB 暂时不可用（HTTP ${response.status}）。`);
+      }
+      let body;
+      try { body = await response.json(); } catch { throw new FootballError('INVALID_RESPONSE', 'TheSportsDB 返回了无效数据。'); }
+      if (body?.error || body?.errors) throw new FootballError('AUTH', 'TheSportsDB 拒绝访问，请检查 API Key 和订阅状态。');
+      if (!body || !(Array.isArray(body[collection]) || body[collection] === null)) {
+        throw new FootballError('INVALID_RESPONSE', 'TheSportsDB 返回的数据格式不正确。');
+      }
+      return { data: body[collection] || [], quota: quotaFromHeaders(response.headers) };
+    } catch (error) { throw networkError(error); }
+  }
+  return {
+    async fetchFixtures(date) {
+      const result = await request('eventsday.php', { d: date, s: 'Soccer' }, 'events');
+      return {
+        data: result.data
+          .filter((event) => !event.strSport || event.strSport.toLowerCase() === 'soccer')
+          .map(normalizeTheSportsDbEvent)
+          .filter((item) => item.fixture.id && item.fixture.date),
+        quota: result.quota,
+      };
+    },
+    async test() {
+      const result = await request('all_sports.php', {}, 'sports');
+      return { quota: result.quota };
+    },
+  };
+}
+
 export function createProviderClient({ providerId, apiKey, fetchImpl, dispatcher, timeoutMs } = {}) {
   const id = normalizeProviderId(providerId);
   if (id === 'the-stats-api') return createTheStatsApiClient({ apiKey, fetchImpl, dispatcher, timeoutMs });
+  if (id === 'the-sports-db') return createTheSportsDbClient({ apiKey, fetchImpl, dispatcher, timeoutMs });
   const request = createFootballClient({ apiKey, fetchImpl, dispatcher, timeoutMs });
   return {
     fetchFixtures: (date, timezone = 'Asia/Shanghai') => request('fixtures', { date, timezone }),
