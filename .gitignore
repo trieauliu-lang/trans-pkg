@@ -1,0 +1,7 @@
+node_modules/
+dist/
+.env
+data/tasks.json
+data/team-translations.json
+*.log
+.DS_Store
