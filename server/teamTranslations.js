@@ -260,7 +260,35 @@ export function translateKnownTeamName(name) {
 }
 
 export function getKnownTeamTranslations() {
-  return { ...TEAM_NAME_OVERRIDES };
+  return {
+    ...TEAM_NAME_OVERRIDES,
+    ...Object.fromEntries(Object.entries(cache).filter(([, value]) => HAS_CHINESE.test(value || ''))),
+  };
+}
+
+export function validateManualTeamTranslation(name, translation) {
+  const source = normalizeName(name);
+  const translated = normalizeName(translation);
+  if (!source) throw new Error('球队原名不能为空');
+  if (source.length > 160) throw new Error('球队原名不能超过 160 个字符');
+  if (!translated || !HAS_CHINESE.test(translated)) throw new Error('请输入包含中文的球队译名');
+  if (translated.length > 80) throw new Error('球队译名不能超过 80 个字符');
+  return { source, translated };
+}
+
+export function saveManualTeamTranslation(name, translation) {
+  const { source, translated } = validateManualTeamTranslation(name, translation);
+  cache[source] = translated;
+  saveCache();
+  return { source, translated };
+}
+
+export function removeManualTeamTranslation(name) {
+  const source = normalizeName(name);
+  if (!source) throw new Error('球队原名不能为空');
+  delete cache[source];
+  saveCache();
+  return source;
 }
 
 async function fetchTencentTranslations(names) {

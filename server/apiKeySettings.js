@@ -182,6 +182,10 @@ export function publicApiKeySettings(settings) {
       id, label, hint: maskApiKey(key), source, provider: provider || 'api-football', createdAt, lastUsedAt,
       lastRequestAt: lastRequestAt || null,
       todayUsage: usageByDate?.[today] || { total: 0, fixtures: 0, tests: 0 },
+      usageHistory: Object.entries(usageByDate || {})
+        .sort(([left], [right]) => right.localeCompare(left))
+        .slice(0, 31)
+        .map(([date, usage]) => ({ date, total: Number(usage.total || 0), fixtures: Number(usage.fixtures || 0), tests: Number(usage.tests || 0) })),
       testStatus: testStatus || 'untested', testMessage: testMessage || '', testedAt: testedAt || null,
       testQuota: testQuota || null, active: id === settings.activeApiKeyId,
     })),

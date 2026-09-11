@@ -121,6 +121,10 @@ function teamDisplayName(team, translations = {}) {
   return translations[team?.name] || team?.zhName || team?.name || '未知球队';
 }
 
+function hasChineseTeamName(team, translations = {}) {
+  return /[\u3400-\u9fff]/.test(teamDisplayName(team, translations));
+}
+
 function normalizedTaskRules(task) {
   if (Array.isArray(task.rules) && task.rules.length) return task.rules;
   return [{
@@ -211,7 +215,7 @@ function EmptyState({ onCreate }) {
   );
 }
 
-function MatchCard({ fixture, selected, onToggle, compact = false, translations = {} }) {
+function MatchCard({ fixture, selected, onToggle, onTranslate, compact = false, translations = {} }) {
   const live = ['1H', '2H', 'HT', 'ET'].includes(fixture.fixture.status.short);
   const finished = FINISHED.has(fixture.fixture.status.short);
   const homeOriginal = fixture.teams.home.name;
@@ -219,12 +223,13 @@ function MatchCard({ fixture, selected, onToggle, compact = false, translations 
   const homeName = translations[homeOriginal] || fixture.teams.home.zhName || homeOriginal;
   const awayName = translations[awayOriginal] || fixture.teams.away.zhName || awayOriginal;
   return (
-    <button
-      type="button"
-      className={`match-card ${selected ? 'match-card--selected' : ''} ${compact ? 'match-card--compact' : ''}`}
-      onClick={() => onToggle?.(fixture)}
-      aria-pressed={selected}
-    >
+    <div className="match-card-wrap">
+      <button
+        type="button"
+        className={`match-card ${selected ? 'match-card--selected' : ''} ${compact ? 'match-card--compact' : ''}`}
+        onClick={() => onToggle?.(fixture)}
+        aria-pressed={selected}
+      >
       <div className="match-card__topline">
         <span>{fixture.league.name}</span>
         <span className={live ? 'live-copy' : ''}>{live && <i />}{fixtureStatus(fixture)}</span>
@@ -251,7 +256,20 @@ function MatchCard({ fixture, selected, onToggle, compact = false, translations 
         </div>
       )}
 
-    </button>
+      </button>
+      {onTranslate && <div className="match-card__translate-actions"><button type="button" onClick={() => onTranslate(homeOriginal, homeName)} title={`修正 ${homeOriginal} 的中文名`}><Pencil size={11} />主队译名</button><button type="button" onClick={() => onTranslate(awayOriginal, awayName)} title={`修正 ${awayOriginal} 的中文名`}><Pencil size={11} />客队译名</button></div>}
+    </div>
+  );
+}
+
+function ApiUsageHistory({ item }) {
+  if (!item) return null;
+  const history = (item.usageHistory || []).slice(0, 7);
+  return (
+    <section className="api-usage-history">
+      <div><strong>{item.label} · 最近每日用量</strong><small>按北京时间统计真实上游请求</small></div>
+      {history.length ? <table><thead><tr><th>日期</th><th>总请求</th><th>比赛</th><th>测试</th></tr></thead><tbody>{history.map((usage) => <tr key={usage.date}><td>{usage.date}</td><td>{usage.total}</td><td>{usage.fixtures}</td><td>{usage.tests}</td></tr>)}</tbody></table> : <p>这个 Key 暂无请求记录。</p>}
+    </section>
   );
 }
 
@@ -439,6 +457,7 @@ export default function App() {
   const [selectedIds, setSelectedIds] = useState([]);
   const [date, setDate] = useState(initialFixtureSnapshot?.date || localDateValue());
   const [fixtureSearch, setFixtureSearch] = useState('');
+  const [untranslatedOnly, setUntranslatedOnly] = useState(false);
   const [visibleCount, setVisibleCount] = useState(24);
   const [loadingFixtures, setLoadingFixtures] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -460,6 +479,8 @@ export default function App() {
   const [deletingApiKeyId, setDeletingApiKeyId] = useState(null);
   const [switchingApiKeyId, setSwitchingApiKeyId] = useState(null);
   const [testingApiKeyId, setTestingApiKeyId] = useState(null);
+  const [translationEditor, setTranslationEditor] = useState(null);
+  const [savingTranslation, setSavingTranslation] = useState(false);
   const audioRef = useRef(null);
   const audioContextRef = useRef(null);
   const customAudioUrlRef = useRef('');
@@ -471,6 +492,7 @@ export default function App() {
   const visibleFixtures = useMemo(() => {
     const keyword = fixtureSearch.trim().toLocaleLowerCase();
     return fixtures
+      .filter((fixture) => !untranslatedOnly || !hasChineseTeamName(fixture.teams.home, teamTranslations) || !hasChineseTeamName(fixture.teams.away, teamTranslations))
       .filter((fixture) => !keyword || [
         fixture.league.name,
         fixture.league.country,
@@ -481,8 +503,14 @@ export default function App() {
       ]
         .some((value) => value?.toLocaleLowerCase().includes(keyword)))
       .sort((left, right) => Date.parse(left.fixture.date) - Date.parse(right.fixture.date));
-  }, [fixtures, fixtureSearch, teamTranslations]);
+  }, [fixtures, fixtureSearch, untranslatedOnly, teamTranslations]);
   const displayedFixtures = useMemo(() => visibleFixtures.slice(0, visibleCount), [visibleFixtures, visibleCount]);
+  const translationCoverage = useMemo(() => {
+    const teams = new Map();
+    fixtures.forEach((fixture) => [fixture.teams.home, fixture.teams.away].forEach((team) => teams.set(team.name, team)));
+    const translated = [...teams.values()].filter((team) => hasChineseTeamName(team, teamTranslations)).length;
+    return { translated, total: teams.size };
+  }, [fixtures, teamTranslations]);
 
   function showToast(message) {
     setToast(message);
@@ -683,6 +711,31 @@ export default function App() {
     }
   }
 
+  function editTeamTranslation(name, currentValue) {
+    setTranslationEditor({ name, translation: currentValue === name ? '' : currentValue });
+  }
+
+  async function saveTeamTranslation(event) {
+    event.preventDefault();
+    setSavingTranslation(true);
+    try {
+      const response = await fetch('/api/team-translations/manual', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(translationEditor),
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || '队名译名保存失败');
+      setTeamTranslations((current) => ({ ...current, [body.translation.source]: body.translation.translated }));
+      setTranslationEditor(null);
+      showToast('中文队名已保存，后续比赛会继续使用');
+    } catch (error) {
+      showToast(error.message);
+    } finally {
+      setSavingTranslation(false);
+    }
+  }
+
   async function loadTasks() {
     const response = await fetch('/api/tasks');
     const body = await response.json();
@@ -757,12 +810,13 @@ export default function App() {
 
   useEffect(() => {
     Promise.all([
-      fetch('/api/health').then((response) => response.json()),
+      fetch('/api/settings/api-keys').then((response) => response.json()),
       fetch('/api/tasks').then((response) => response.json()),
       fetch('/api/team-translations/known').then((response) => response.json()),
     ])
       .then(([healthBody, tasksBody, translationsBody]) => {
         setHealth(healthBody);
+        setApiKeys(healthBody.apiKeys || []);
         setTasks(tasksBody.tasks || []);
         setTeamTranslations(translationsBody.translations || {});
       })
@@ -787,7 +841,7 @@ export default function App() {
     };
   }, []);
 
-  useEffect(() => { setVisibleCount(24); }, [date, fixtureSearch]);
+  useEffect(() => { setVisibleCount(24); }, [date, fixtureSearch, untranslatedOnly]);
 
   useEffect(() => {
     const candidates = [...displayedFixtures, ...(activeTask?.fixtures || [])]
@@ -901,7 +955,7 @@ export default function App() {
         {activePage === 'fixtures' && <section className="content-grid" id="fixtures">
           <div className="fixture-browser">
             <div className="section-heading">
-              <div className="section-heading__copy"><span className="section-index">1</span><div><h2>选择{monitorDateLabel(date)}的比赛</h2><p>{date} · 共 {visibleFixtures.length} 场{fixtureMeta.quota?.remaining != null ? ` · 今日剩余 ${fixtureMeta.quota.remaining}/${fixtureMeta.quota.limit}` : ''}{fixtureMeta.cache ? ` · ${fixtureMeta.cache.source === 'api' ? '刚从 API 更新' : '已使用服务端缓存'}` : ''}</p></div></div>
+              <div className="section-heading__copy"><span className="section-index">1</span><div><h2>选择{monitorDateLabel(date)}的比赛</h2><p>{date} · 共 {visibleFixtures.length} 场{translationCoverage.total ? ` · 中文队名 ${translationCoverage.translated}/${translationCoverage.total}` : ''}{fixtureMeta.quota?.remaining != null ? ` · 今日剩余 ${fixtureMeta.quota.remaining}/${fixtureMeta.quota.limit}` : ''}{fixtureMeta.cache ? ` · ${fixtureMeta.cache.source === 'api' ? '刚从 API 更新' : '已使用服务端缓存'}` : ''}</p></div></div>
               <div className="fixture-browser__tools">
                 <div className="date-shortcuts">
                   {[0, 1, 2].map((days) => {
@@ -914,18 +968,22 @@ export default function App() {
               </div>
             </div>
             <div className="filter-row">
+              <button className={`filter-chip ${untranslatedOnly ? 'filter-chip--active' : ''}`} onClick={() => setUntranslatedOnly((value) => !value)}><Pencil size={13} />仅看未翻译</button>
               <label className="fixture-search"><Search size={14} /><input value={fixtureSearch} onChange={(event) => setFixtureSearch(event.target.value)} placeholder="搜索球队或联赛" aria-label="搜索球队或联赛" /></label>
               <span>{selectedIds.length} 场已选择</span>
             </div>
-            {loadingFixtures ? <div className="loading-state"><LoaderCircle className="spin" /><span>正在查询比赛…</span></div> : visibleFixtures.length ? <><div className="fixture-grid">{displayedFixtures.map((fixture) => <MatchCard key={fixture.fixture.id} fixture={fixture} translations={teamTranslations} selected={selectedIds.includes(fixture.fixture.id)} onToggle={toggleFixture} />)}</div>{visibleCount < visibleFixtures.length && <button className="load-more" onClick={() => setVisibleCount((count) => count + 24)}>显示更多比赛（剩余 {visibleFixtures.length - visibleCount} 场）</button>}</> : <div className="loading-state"><Search /><span>{hasQueriedFixtures ? '没有找到符合条件的比赛' : '选择日期后点击“查询比赛”，页面不会自动消耗 API 额度'}</span></div>}
+            {loadingFixtures ? <div className="loading-state"><LoaderCircle className="spin" /><span>正在查询比赛…</span></div> : visibleFixtures.length ? <><div className="fixture-grid">{displayedFixtures.map((fixture) => <MatchCard key={fixture.fixture.id} fixture={fixture} translations={teamTranslations} selected={selectedIds.includes(fixture.fixture.id)} onToggle={toggleFixture} onTranslate={editTeamTranslation} />)}</div>{visibleCount < visibleFixtures.length && <button className="load-more" onClick={() => setVisibleCount((count) => count + 24)}>显示更多比赛（剩余 {visibleFixtures.length - visibleCount} 场）</button>}</> : <div className="loading-state"><Search /><span>{hasQueriedFixtures ? '没有找到符合条件的比赛' : '选择日期后点击“查询比赛”，页面不会自动消耗 API 额度'}</span></div>}
             {selectedIds.length > 0 && <div className="selection-bar"><div><Check size={17} /><span>已锁定 <strong>{selectedIds.length}</strong> 场目标</span></div><button className="button button--primary button--small" onClick={() => setDrawerOpen(true)}>配置规则<ChevronRight size={16} /></button></div>}
           </div>
         </section>}
 
+        {activePage === 'monitor' && apiKeys.length > 0 && <section className="api-usage-dashboard"><div className="api-usage-dashboard__heading"><div><p className="section-caption">API 用量</p><h2>最近 7 天请求统计</h2></div><button className="button button--secondary button--small" onClick={openApiKeySettings}><KeyRound size={15} />管理 Key</button></div><div className="api-usage-dashboard__grid">{apiKeys.map((item) => <ApiUsageHistory key={item.id} item={item} />)}</div></section>}
         {activePage === 'monitor' && (activeTask ? <TaskDetail task={activeTask} translations={teamTranslations} onAction={taskAction} /> : <EmptyState onCreate={() => navigatePage('fixtures')} />)}
       </main>
 
       {drawerOpen && <CreateTaskPanel fixtures={fixtures} selectedIds={selectedIds} setSelectedIds={setSelectedIds} monitorDate={date} translations={teamTranslations} onClose={() => setDrawerOpen(false)} onError={showToast} onArmSound={() => enableSound(false)} onCreated={(task) => { setDrawerOpen(false); setSelectedIds([]); setActiveTaskId(task.id); navigatePage('monitor'); loadTasks(); showToast('监控任务已创建，声音提醒已启用'); }} />}
+
+      {translationEditor && <div className="alert-overlay" onMouseDown={(event) => event.target === event.currentTarget && setTranslationEditor(null)}><form className="alert-dialog translation-dialog" onSubmit={saveTeamTranslation}><span className="alert-dialog__icon"><Pencil size={27} /></span><p className="section-caption">队名翻译</p><h2>修正中文队名</h2><p>保存后会写入服务器译名缓存，今后遇到同一支球队会直接使用。</p><label className="field"><span>API 返回的原名</span><input value={translationEditor.name} readOnly /></label><label className="field"><span>中文译名</span><input autoFocus maxLength="80" value={translationEditor.translation} onChange={(event) => setTranslationEditor((current) => ({ ...current, translation: event.target.value }))} placeholder="请输入包含中文的球队名称" /></label><div className="api-key-dialog__actions"><button type="button" className="button button--ghost" onClick={() => setTranslationEditor(null)}>取消</button><button className="button button--primary" disabled={savingTranslation || !/[\u3400-\u9fff]/.test(translationEditor.translation)}>{savingTranslation ? <LoaderCircle className="spin" size={17} /> : <Check size={17} />}保存译名</button></div></form></div>}
 
       {apiKeyOpen && <div className="alert-overlay" onMouseDown={(event) => event.target === event.currentTarget && setApiKeyOpen(false)}><form className="alert-dialog api-key-dialog" onSubmit={importApiKey}><span className="alert-dialog__icon"><KeyRound size={30} /></span><p className="section-caption">API 设置</p><h2>管理比分 API</h2><p>每个 Key 绑定一个平台；请求次数按北京时间每天独立统计并实时更新。</p>{loadingApiKeys ? <div className="api-key-list__loading"><LoaderCircle className="spin" size={18} />正在读取…</div> : apiKeys.length > 0 && <div className="api-key-list" role="list">{apiKeys.map((item) => <div role="listitem" key={item.id} className={`api-key-item ${item.active ? 'api-key-item--active' : ''} ${item.testStatus === 'error' ? 'api-key-item--error' : ''}`}><button type="button" className="api-key-item__select" onClick={() => switchApiKey(item.id)} disabled={Boolean(switchingApiKeyId || testingApiKeyId || deletingApiKeyId || savingApiKey)}><span><strong>{item.label}</strong><small>{health.providers?.find((provider) => provider.id === item.provider)?.label || item.provider} · {item.hint}{item.source === 'environment' ? ' · 环境变量' : ''}</small><small className="api-key-item__usage">今日请求 {item.todayUsage?.total || 0} 次 · 比赛 {item.todayUsage?.fixtures || 0} · 测试 {item.todayUsage?.tests || 0}</small><small className={`api-key-item__health api-key-item__health--${item.testStatus}`}>{item.testStatus === 'healthy' ? `连接正常${item.testQuota?.remaining != null ? ` · 剩余 ${item.testQuota.remaining}/${item.testQuota.limit}` : ''}` : item.testStatus === 'error' ? `连接异常 · ${item.testMessage}` : '尚未测试'}</small></span>{item.active ? <em><Check size={14} />使用中</em> : switchingApiKeyId === item.id ? <LoaderCircle className="spin" size={16} /> : <em>切换</em>}</button><button type="button" className="api-key-item__edit" onClick={() => editApiKey(item)} disabled={Boolean(testingApiKeyId || switchingApiKeyId || deletingApiKeyId || savingApiKey || item.source === 'environment')} title={item.source === 'environment' ? '环境变量 Key 请修改服务器配置' : '修改名称和绑定平台'}><Pencil size={13} />编辑</button><button type="button" className="api-key-item__test" onClick={() => testApiKey(item.id)} disabled={Boolean(testingApiKeyId || switchingApiKeyId || deletingApiKeyId || savingApiKey)}>{testingApiKeyId === item.id ? <LoaderCircle className="spin" size={14} /> : <Activity size={14} />}测试</button><button type="button" className="api-key-item__delete" onClick={() => deleteApiKey(item)} disabled={Boolean(testingApiKeyId || switchingApiKeyId || deletingApiKeyId || savingApiKey || item.source === 'environment')} title={item.source === 'environment' ? '环境变量 Key 请从服务器配置中删除' : '删除 API Key'}>{deletingApiKeyId === item.id ? <LoaderCircle className="spin" size={14} /> : <Trash2 size={14} />}</button></div>)}</div>}<div className="api-key-form">{editingApiKeyId && <div className="api-key-editing">正在修改现有 Key；保存后将使用新平台重新测试，Key 内容保持不变。</div>}<label className="field"><span>{editingApiKeyId ? '绑定平台' : 'API 平台'}</span><select value={apiProviderId} onChange={(event) => setApiProviderId(event.target.value)}>{(health.providers || [{ id: 'api-football', label: 'API-Football' }, { id: 'the-stats-api', label: 'TheStatsAPI' }, { id: 'the-sports-db', label: 'TheSportsDB' }]).map((provider) => <option key={provider.id} value={provider.id}>{provider.label}</option>)}</select></label><label className="field"><span>名称（可选）</span><input maxLength="40" value={apiKeyLabel} onChange={(event) => setApiKeyLabel(event.target.value)} placeholder="例如：比分备用账号" /></label>{!editingApiKeyId && <label className="field"><span>新增 API Key</span><input type="password" autoComplete="off" value={apiKeyValue} onChange={(event) => setApiKeyValue(event.target.value)} placeholder={apiProviderId === 'the-sports-db' ? '免费 Key 可填写 123' : '粘贴对应平台的 API Key'} /></label>}</div><div className="api-key-dialog__actions"><button type="button" className="button button--ghost" onClick={editingApiKeyId ? cancelApiKeyEdit : () => setApiKeyOpen(false)}>{editingApiKeyId ? '取消修改' : '完成'}</button><button className="button button--primary" disabled={savingApiKey || deletingApiKeyId || (!editingApiKeyId && !apiKeyValue.trim())}>{savingApiKey ? <LoaderCircle className="spin" size={17} /> : <KeyRound size={17} />}{editingApiKeyId ? '保存修改' : '保存并启用'}</button></div></form></div>}
 

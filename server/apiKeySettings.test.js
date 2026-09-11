@@ -17,6 +17,9 @@ test('counts each upstream request per key and per Shanghai calendar day', () =>
   assert.deepEqual(settings.apiKeys[0].usageByDate['2026-09-11'], { total: 1, fixtures: 1, tests: 0 });
   assert.deepEqual(settings.apiKeys[0].usageByDate['2026-09-12'], { total: 2, fixtures: 1, tests: 1 });
   assert.equal(settings.apiKeys[0].lastRequestAt, '2026-09-11T16:02:00.000Z');
+  const history = publicApiKeySettings(settings).apiKeys[0].usageHistory;
+  assert.deepEqual(history.map((item) => item.date), ['2026-09-12', '2026-09-11']);
+  assert.deepEqual(history[0], { date: '2026-09-12', total: 2, fixtures: 1, tests: 1 });
 });
 
 test('persists request usage for an environment key without saving its secret', () => {

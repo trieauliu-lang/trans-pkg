@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { getKnownTeamTranslations, translateKnownTeamName } from './teamTranslations.js';
+import { getKnownTeamTranslations, translateKnownTeamName, validateManualTeamTranslation } from './teamTranslations.js';
 
 test('uses standard Chinese club names for known teams', () => {
   assert.equal(translateKnownTeamName('Manchester United'), '曼联');
@@ -22,4 +22,10 @@ test('exposes known names for Chinese search before fixtures are visible', () =>
   const translations = getKnownTeamTranslations();
   assert.equal(translations['FC Copenhagen'], '哥本哈根');
   assert.equal(translations['AC Horsens'], '霍森斯');
+});
+
+test('validates manual Chinese team-name corrections', () => {
+  assert.deepEqual(validateManualTeamTranslation('  New Club  ', ' 新俱乐部 '), { source: 'New Club', translated: '新俱乐部' });
+  assert.throws(() => validateManualTeamTranslation('', '新俱乐部'), /原名/);
+  assert.throws(() => validateManualTeamTranslation('New Club', 'New Club'), /包含中文/);
 });

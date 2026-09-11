@@ -11,7 +11,7 @@ import {
   activateApiKey, addApiKey, getActiveApiKey, getApiKey, maskApiKey,
   publicApiKeySettings, readApiKeySettings, recordApiKeyRequest, removeApiKey, saveApiKeySettings, updateApiKeyProfile, updateApiKeyTest,
 } from './apiKeySettings.js';
-import { getKnownTeamTranslations, translateTeamNames } from './teamTranslations.js';
+import { getKnownTeamTranslations, removeManualTeamTranslation, saveManualTeamTranslation, translateTeamNames } from './teamTranslations.js';
 import { normalizeTaskSettings, validateTask } from './taskSettings.js';
 
 
@@ -396,6 +396,24 @@ app.post('/api/team-translations', async (request, response) => {
 
 app.get('/api/team-translations/known', (_request, response) => {
   response.json({ translations: getKnownTeamTranslations() });
+});
+
+app.put('/api/team-translations/manual', (request, response) => {
+  try {
+    const result = saveManualTeamTranslation(request.body?.name, request.body?.translation);
+    response.json({ translation: result, translations: getKnownTeamTranslations() });
+  } catch (error) {
+    response.status(400).json({ error: error.message });
+  }
+});
+
+app.delete('/api/team-translations/manual', (request, response) => {
+  try {
+    removeManualTeamTranslation(request.body?.name);
+    response.json({ translations: getKnownTeamTranslations() });
+  } catch (error) {
+    response.status(400).json({ error: error.message });
+  }
 });
 
 app.get('/api/tasks', (_request, response) => response.json({ tasks }));
