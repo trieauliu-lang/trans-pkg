@@ -31,7 +31,7 @@ const STATUS_META = {
   running: { label: '监控中', tone: 'running' },
   triggered: { label: '已触发', tone: 'triggered' },
   stopped: { label: '已停止', tone: 'stopped' },
-  error: { label: '请求异常', tone: 'error' },
+  error: { label: '等待重试', tone: 'error' },
 };
 
 const OPERATOR_LABELS = { gt: '大于', gte: '大于等于', eq: '等于', lt: '小于', lte: '小于等于' };
@@ -159,7 +159,7 @@ function MatchCard({ fixture, selected, onToggle, compact = false, translations 
           <span className="match-card__selection">{selected ? <><Check size={14} />已选择</> : '点击选择'}</span>
         </div>
       )}
-      {finished && <span className="match-card__finished">FT</span>}
+
     </button>
   );
 }
@@ -279,9 +279,9 @@ function TaskDetail({ task, translations, onAction }) {
   return (
     <section className="task-detail">
       <div className="task-detail__header">
-        <div><div className="task-detail__kicker"><StatusPill status={task.status} /><span>ID {task.id.slice(0, 8)}</span></div><h2>{task.name}</h2><p>{task.lastMessage}</p></div>
+        <div><div className="task-detail__kicker"><StatusPill status={task.status} /><span>ID {task.id.slice(0, 8)}</span></div><h2>{task.name}</h2><p>{task.error ? '本轮比分更新失败，提醒条件尚未重新判断' : task.lastMessage}</p></div>
         <div className="task-detail__actions">
-          {['stopped', 'triggered', 'error'].includes(task.status) && <button className="button button--secondary" onClick={() => onAction(task.id, 'run')}><Play size={16} />再次启动</button>}
+          {['stopped', 'triggered', 'error'].includes(task.status) && <button className="button button--secondary" onClick={() => onAction(task.id, 'run')}><Play size={16} />{task.status === 'error' ? '立即重试' : '再次启动'}</button>}
           {['scheduled', 'running', 'error'].includes(task.status) && <button className="button button--secondary" onClick={() => onAction(task.id, 'stop')}><CircleStop size={16} />停止</button>}
           <button className="icon-button icon-button--danger" onClick={() => onAction(task.id, 'delete')} aria-label="删除任务"><Trash2 size={18} /></button>
         </div>
@@ -299,10 +299,13 @@ function TaskDetail({ task, translations, onAction }) {
         <div className="monitor-beam__rule">{task.evaluateWhen === 'all_finished' ? '全部完场后' : '每场完场时'} · {task.matchScope === 'any' ? '任意一场' : '全部比赛'} · {task.metric === 'total_goals' ? '总进球' : '比分差'} {OPERATOR_LABELS[task.operator]} {task.threshold}</div>
       </div>
 
+      <p className={`data-freshness ${task.error ? 'data-freshness--stale' : ''}`}>
+        {task.error ? '当前展示历史比分 · ' : '比分更新时间 · '}{task.lastSucceededAt ? formatDateTime(task.lastSucceededAt) : '暂无成功更新记录'}
+      </p>
       <div className="task-fixtures">
         {task.fixtures.map((fixture) => <MatchCard key={fixture.fixture.id} fixture={fixture} compact translations={translations} selected={fixture.fixture.id === task.triggerFixtureId} />)}
       </div>
-      {task.error && <div className="error-banner"><Zap size={18} /><div><strong>API 请求异常</strong><p>{task.error}</p></div></div>}
+      {task.error && <div className="error-banner" role="alert"><Zap size={18} /><div><strong>比分更新失败{task.errorCode ? ` · ${task.errorCode}` : ''}</strong><p>{task.error === 'fetch failed' ? '无法连接比分服务，请检查服务器网络或代理设置。' : task.error}</p><p>{task.status === 'error' ? `连续失败 ${task.consecutiveFailures || 1} 次 · 将于 ${formatDateTime(task.nextCheckAt)} 自动重试，也可点击“立即重试”。` : '任务已停止，可再次启动检查连接。'}</p></div></div>}
     </section>
   );
 }

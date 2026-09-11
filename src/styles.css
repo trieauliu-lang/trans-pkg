@@ -444,3 +444,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto; animation-duration: .01ms; animation-iteration-count: 1; transition-duration: .01ms; }
 }
+
+.data-freshness { margin: 14px 0 0; color: var(--muted); font-size: 11px; }
+.data-freshness--stale { color: var(--amber); }
+.error-banner > svg { flex-shrink: 0; }
+.error-banner p { line-height: 1.7; overflow-wrap: anywhere; }

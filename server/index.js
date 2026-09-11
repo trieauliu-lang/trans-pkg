@@ -4,6 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import crypto from 'node:crypto';
 import { evaluateTask } from './rules.js';
+import { createFootballClient, retryDelay } from './footballClient.js';
 import { getKnownTeamTranslations, translateTeamNames } from './teamTranslations.js';
 import { normalizeTaskSettings, validateTask } from './taskSettings.js';
 
@@ -64,23 +65,7 @@ function broadcast(event, payload) {
   clients.forEach((client) => client.write(message));
 }
 
-async function footballRequest(endpoint, params = {}) {
-  if (!apiKey) throw new Error('API_FOOTBALL_KEY_NOT_CONFIGURED');
-  const url = new URL(`https://v3.football.api-sports.io/${endpoint}`);
-  Object.entries(params).forEach(([key, value]) => value !== undefined && value !== '' && url.searchParams.set(key, value));
-  const response = await fetch(url, { headers: { 'x-apisports-key': apiKey } });
-  const body = await response.json();
-  if (!response.ok || Object.keys(body.errors || {}).length) {
-    throw new Error(body.message || JSON.stringify(body.errors) || `API 请求失败 (${response.status})`);
-  }
-  return {
-    data: body.response || [],
-    quota: {
-      remaining: response.headers.get('x-ratelimit-requests-remaining'),
-      limit: response.headers.get('x-ratelimit-requests-limit'),
-    },
-  };
-}
+const footballRequest = createFootballClient({ apiKey });
 
 async function getTaskFixtures(task) {
   if (!apiKey) {
@@ -102,13 +87,19 @@ async function getTaskFixtures(task) {
 }
 
 async function runTask(task) {
+  const revision = task.revision || 0;
+  const isCurrent = () => tasks.includes(task) && (task.revision || 0) === revision;
   const now = new Date().toISOString();
   if (apiKey) task.requestCount += 1;
   try {
     const fixtures = await getTaskFixtures(task);
+    if (!isCurrent()) return;
     const result = evaluateTask(task, fixtures);
     task.fixtures = fixtures;
     task.lastCheckedAt = now;
+    task.lastSucceededAt = new Date().toISOString();
+    task.consecutiveFailures = 0;
+    task.errorCode = null;
     task.lastMessage = result.reason;
     task.error = null;
     if (result.matched) {
@@ -122,10 +113,14 @@ async function runTask(task) {
       task.nextCheckAt = new Date(Date.now() + task.intervalMinutes * 60_000).toISOString();
     }
   } catch (error) {
+    if (!isCurrent()) return;
     task.status = 'error';
     task.error = error.message;
+    task.errorCode = error.code || 'FIXTURES';
+    task.consecutiveFailures = (task.consecutiveFailures || 0) + 1;
+    task.lastMessage = '本轮未获取到最新比分，等待自动重试';
     task.lastCheckedAt = now;
-    task.nextCheckAt = new Date(Date.now() + Math.max(task.intervalMinutes, 3) * 60_000).toISOString();
+    task.nextCheckAt = new Date(Date.now() + retryDelay(task.intervalMinutes, task.consecutiveFailures, error.retryAfterMs)).toISOString();
     broadcast('task-error', task);
   }
   saveTasks();
@@ -138,8 +133,9 @@ setInterval(() => {
     if (!['scheduled', 'running', 'error'].includes(task.status)) return;
     const dueAt = task.status === 'scheduled' ? Date.parse(task.startAt) : Date.parse(task.nextCheckAt || 0);
     if (dueAt <= now && !task.checking) {
-      task.checking = true;
-      runTask(task).finally(() => { delete task.checking; });
+      const check = Symbol();
+      task.checking = check;
+      runTask(task).finally(() => { if (task.checking === check) delete task.checking; });
     }
   });
 }, 5_000);
@@ -206,7 +202,11 @@ app.put('/api/tasks/:id', (request, response) => {
   if (error) return response.status(400).json({ error });
 
   const settings = normalizeTaskSettings(request.body);
+  task.revision = (task.revision || 0) + 1;
   Object.assign(task, settings, {
+    consecutiveFailures: 0,
+    errorCode: null,
+    lastSucceededAt: null,
     status: Date.parse(settings.startAt) > Date.now() ? 'scheduled' : 'running',
     nextCheckAt: settings.startAt,
     lastCheckedAt: null,
@@ -224,18 +224,24 @@ app.put('/api/tasks/:id', (request, response) => {
 app.post('/api/tasks/:id/run', (request, response) => {
   const task = tasks.find((item) => item.id === request.params.id);
   if (!task) return response.status(404).json({ error: '任务不存在' });
+  task.revision = (task.revision || 0) + 1;
+  task.consecutiveFailures = 0;
+  task.errorCode = null;
+  task.lastMessage = '等待重新检查';
   task.status = 'running';
   task.startAt = new Date().toISOString();
   task.nextCheckAt = task.startAt;
   task.error = null;
   delete task.checking;
   saveTasks();
+  broadcast('tasks-updated', tasks);
   response.json({ task });
 });
 
 app.post('/api/tasks/:id/stop', (request, response) => {
   const task = tasks.find((item) => item.id === request.params.id);
   if (!task) return response.status(404).json({ error: '任务不存在' });
+  task.revision = (task.revision || 0) + 1;
   task.status = 'stopped';
   task.nextCheckAt = null;
   saveTasks();
@@ -262,7 +268,7 @@ app.get('/api/events', (request, response) => {
   request.on('close', () => clients.delete(response));
 });
 
-if (process.env.NODE_ENV === 'production') {
+if (process.env.NODE_ENV === 'production' || process.argv.includes('--production')) {
   app.use(express.static(path.join(rootDir, 'dist')));
   app.use((_request, response) => response.sendFile(path.join(rootDir, 'dist', 'index.html')));
 }
