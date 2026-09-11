@@ -9,7 +9,7 @@ import { createFixtureCache } from './fixtureCache.js';
 import { createProviderClient, PROVIDERS } from './providers.js';
 import {
   activateApiKey, addApiKey, getActiveApiKey, getApiKey, maskApiKey,
-  publicApiKeySettings, readApiKeySettings, saveApiKeySettings, updateApiKeyTest,
+  publicApiKeySettings, readApiKeySettings, saveApiKeySettings, updateApiKeyProfile, updateApiKeyTest,
 } from './apiKeySettings.js';
 import { getKnownTeamTranslations, translateTeamNames } from './teamTranslations.js';
 import { normalizeTaskSettings, validateTask } from './taskSettings.js';
@@ -283,6 +283,20 @@ app.post('/api/settings/api-keys/:id/activate', (request, response) => {
     response.json(apiKeyPayload());
   } catch (error) {
     response.status(404).json({ error: error.message });
+  }
+});
+
+app.patch('/api/settings/api-keys/:id', (request, response) => {
+  try {
+    apiKeySettings = updateApiKeyProfile(apiKeySettings, request.params.id, {
+      label: request.body?.label,
+      provider: request.body?.provider,
+    });
+    saveApiKeySettings(settingsFile, apiKeySettings);
+    if (request.params.id === apiKeySettings.activeApiKeyId) applyActiveApiKey();
+    response.json(apiKeyPayload());
+  } catch (error) {
+    response.status(error.message === 'API Key 不存在' ? 404 : 400).json({ error: error.message });
   }
 });
 

@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   activateApiKey, addApiKey, getActiveApiKey, maskApiKey, normalizeApiKey,
-  publicApiKeySettings, readApiKeySettings, saveApiKeySettings, updateApiKeyTest,
+  publicApiKeySettings, readApiKeySettings, saveApiKeySettings, updateApiKeyProfile, updateApiKeyTest,
 } from './apiKeySettings.js';
 
 test('normalizes and masks an API key without exposing it', () => {
@@ -68,4 +68,28 @@ test('saves multiple keys, migrates legacy data and never exposes full values pu
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }
+});
+
+test('updates an existing key provider and clears its stale test result', () => {
+  let settings = addApiKey({ apiKeys: [], activeApiKeyId: null }, 'shared-secret-1234', '订阅账号', 'the-stats-api');
+  const id = settings.activeApiKeyId;
+  settings = updateApiKeyTest(settings, id, { status: 'error', message: '旧平台拒绝访问' });
+  settings = updateApiKeyProfile(settings, id, { label: '备用比分', provider: 'api-football' });
+  const profile = settings.apiKeys[0];
+  assert.equal(profile.id, id);
+  assert.equal(profile.provider, 'api-football');
+  assert.equal(profile.label, '备用比分');
+  assert.equal(profile.testStatus, 'untested');
+  assert.equal(profile.testMessage, '');
+  assert.equal(profile.testedAt, null);
+  assert.equal(settings.activeApiKeyId, id);
+});
+
+test('rejects rebinding to a duplicate provider and changing an environment key provider', () => {
+  let settings = addApiKey({ apiKeys: [], activeApiKeyId: null }, 'same-secret', 'Football', 'api-football');
+  settings = addApiKey(settings, 'same-secret', 'Stats', 'the-stats-api');
+  const statsId = settings.activeApiKeyId;
+  assert.throws(() => updateApiKeyProfile(settings, statsId, { provider: 'api-football' }), /已存在/);
+  const environmentSettings = readApiKeySettings('missing-settings.json', 'environment-key');
+  assert.throws(() => updateApiKeyProfile(environmentSettings, environmentSettings.activeApiKeyId, { provider: 'the-sports-db' }), /环境变量/);
 });

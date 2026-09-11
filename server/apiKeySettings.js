@@ -76,6 +76,30 @@ export function addApiKey(settings, value, label = '', provider = 'api-football'
   return activateApiKey({ apiKeys, activeApiKeyId: id }, id);
 }
 
+export function updateApiKeyProfile(settings, id, { label = '', provider } = {}) {
+  const current = getApiKey(settings, id);
+  if (!current) throw new Error('API Key 不存在');
+  const providerId = normalizeProviderId(provider || current.provider);
+  if (current.source === 'environment' && providerId !== current.provider) {
+    throw new Error('环境变量 Key 的平台不能修改');
+  }
+  if (settings.apiKeys.some((item) => item.id !== id && item.provider === providerId && item.key === current.key)) {
+    throw new Error('该平台已存在相同的 API Key');
+  }
+  const providerChanged = providerId !== current.provider;
+  return {
+    ...settings,
+    apiKeys: settings.apiKeys.map((item) => item.id === id ? {
+      ...item,
+      label: normalizeLabel(label || item.label, item.key),
+      provider: providerId,
+      ...(providerChanged ? {
+        testStatus: 'untested', testMessage: '', testedAt: null, testQuota: null,
+      } : {}),
+    } : item),
+  };
+}
+
 export function activateApiKey(settings, id) {
   if (!settings.apiKeys.some((item) => item.id === id)) throw new Error('API Key 不存在');
   const lastUsedAt = new Date().toISOString();

@@ -14,6 +14,7 @@ import {
   ListFilter,
   LoaderCircle,
   Music2,
+  Pencil,
   Play,
   Plus,
   Radio,
@@ -362,6 +363,7 @@ export default function App() {
   const [apiKeys, setApiKeys] = useState([]);
   const [loadingApiKeys, setLoadingApiKeys] = useState(false);
   const [savingApiKey, setSavingApiKey] = useState(false);
+  const [editingApiKeyId, setEditingApiKeyId] = useState(null);
   const [switchingApiKeyId, setSwitchingApiKeyId] = useState(null);
   const [testingApiKeyId, setTestingApiKeyId] = useState(null);
   const audioRef = useRef(null);
@@ -438,6 +440,9 @@ export default function App() {
   }
 
   async function openApiKeySettings() {
+    setEditingApiKeyId(null);
+    setApiKeyLabel('');
+    setApiKeyValue('');
     setApiKeyOpen(true);
     setLoadingApiKeys(true);
     try {
@@ -457,22 +462,37 @@ export default function App() {
     event.preventDefault();
     setSavingApiKey(true);
     try {
-      const response = await fetch('/api/settings/api-key', {
-        method: 'POST',
+      const editing = Boolean(editingApiKeyId);
+      const response = await fetch(editing ? `/api/settings/api-keys/${encodeURIComponent(editingApiKeyId)}` : '/api/settings/api-key', {
+        method: editing ? 'PATCH' : 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ apiKey: apiKeyValue, label: apiKeyLabel, provider: apiProviderId }),
+        body: JSON.stringify({ ...(editing ? {} : { apiKey: apiKeyValue }), label: apiKeyLabel, provider: apiProviderId }),
       });
       const body = await response.json();
-      if (!response.ok) throw new Error(body.error || 'API Key 导入失败');
+      if (!response.ok) throw new Error(body.error || (editing ? 'API Key 设置更新失败' : 'API Key 导入失败'));
       acceptApiKeyState(body);
+      setEditingApiKeyId(null);
       setApiKeyValue('');
       setApiKeyLabel('');
-      showToast(`API Key ${body.apiKeyHint} 已保存，请点击“查询比赛”验证`);
+      showToast(editing ? 'API Key 平台已更新，请重新测试连接' : `API Key ${body.apiKeyHint} 已保存，请点击“测试”验证`);
     } catch (error) {
       showToast(error.message);
     } finally {
       setSavingApiKey(false);
     }
+  }
+
+  function editApiKey(item) {
+    setEditingApiKeyId(item.id);
+    setApiProviderId(item.provider);
+    setApiKeyLabel(item.label);
+    setApiKeyValue('');
+  }
+
+  function cancelApiKeyEdit() {
+    setEditingApiKeyId(null);
+    setApiKeyLabel('');
+    setApiKeyValue('');
   }
 
   async function switchApiKey(id) {
@@ -745,7 +765,7 @@ export default function App() {
 
       {drawerOpen && <CreateTaskPanel fixtures={fixtures} selectedIds={selectedIds} setSelectedIds={setSelectedIds} monitorDate={date} translations={teamTranslations} onClose={() => setDrawerOpen(false)} onError={showToast} onArmSound={() => enableSound(false)} onCreated={(task) => { setDrawerOpen(false); setSelectedIds([]); setActiveTaskId(task.id); loadTasks(); showToast('监控任务已创建，声音提醒已启用'); }} />}
 
-      {apiKeyOpen && <div className="alert-overlay" onMouseDown={(event) => event.target === event.currentTarget && setApiKeyOpen(false)}><form className="alert-dialog api-key-dialog" onSubmit={importApiKey}><span className="alert-dialog__icon"><KeyRound size={30} /></span><p className="section-caption">API 设置</p><h2>管理比分 API</h2><p>支持 API-Football、TheStatsAPI 与 TheSportsDB。每个 Key 独立保存平台、测试状态和额度。</p>{loadingApiKeys ? <div className="api-key-list__loading"><LoaderCircle className="spin" size={18} />正在读取…</div> : apiKeys.length > 0 && <div className="api-key-list" role="list">{apiKeys.map((item) => <div role="listitem" key={item.id} className={`api-key-item ${item.active ? 'api-key-item--active' : ''} ${item.testStatus === 'error' ? 'api-key-item--error' : ''}`}><button type="button" className="api-key-item__select" onClick={() => switchApiKey(item.id)} disabled={Boolean(switchingApiKeyId || testingApiKeyId)}><span><strong>{item.label}</strong><small>{health.providers?.find((provider) => provider.id === item.provider)?.label || item.provider} · {item.hint}{item.source === 'environment' ? ' · 环境变量' : ''}</small><small className={`api-key-item__health api-key-item__health--${item.testStatus}`}>{item.testStatus === 'healthy' ? `连接正常${item.testQuota?.remaining != null ? ` · 剩余 ${item.testQuota.remaining}/${item.testQuota.limit}` : ''}` : item.testStatus === 'error' ? `连接异常 · ${item.testMessage}` : '尚未测试'}</small></span>{item.active ? <em><Check size={14} />使用中</em> : switchingApiKeyId === item.id ? <LoaderCircle className="spin" size={16} /> : <em>切换</em>}</button><button type="button" className="api-key-item__test" onClick={() => testApiKey(item.id)} disabled={Boolean(testingApiKeyId || switchingApiKeyId)}>{testingApiKeyId === item.id ? <LoaderCircle className="spin" size={14} /> : <Activity size={14} />}测试</button></div>)}</div>}<div className="api-key-form"><label className="field"><span>API 平台</span><select value={apiProviderId} onChange={(event) => setApiProviderId(event.target.value)}>{(health.providers || [{ id: 'api-football', label: 'API-Football' }, { id: 'the-stats-api', label: 'TheStatsAPI' }, { id: 'the-sports-db', label: 'TheSportsDB' }]).map((provider) => <option key={provider.id} value={provider.id}>{provider.label}</option>)}</select></label><label className="field"><span>名称（可选）</span><input maxLength="40" value={apiKeyLabel} onChange={(event) => setApiKeyLabel(event.target.value)} placeholder="例如：比分备用账号" /></label><label className="field"><span>新增 API Key</span><input type="password" autoComplete="off" value={apiKeyValue} onChange={(event) => setApiKeyValue(event.target.value)} placeholder={apiProviderId === 'the-sports-db' ? '免费 Key 可填写 123' : '粘贴对应平台的 API Key'} /></label></div><div className="api-key-dialog__actions"><button type="button" className="button button--ghost" onClick={() => setApiKeyOpen(false)}>完成</button><button className="button button--primary" disabled={savingApiKey || !apiKeyValue.trim()}>{savingApiKey ? <LoaderCircle className="spin" size={17} /> : <KeyRound size={17} />}保存并启用</button></div></form></div>}
+      {apiKeyOpen && <div className="alert-overlay" onMouseDown={(event) => event.target === event.currentTarget && setApiKeyOpen(false)}><form className="alert-dialog api-key-dialog" onSubmit={importApiKey}><span className="alert-dialog__icon"><KeyRound size={30} /></span><p className="section-caption">API 设置</p><h2>管理比分 API</h2><p>每个 Key 绑定一个平台；修改现有 Key 的平台后，需要重新测试连接。</p>{loadingApiKeys ? <div className="api-key-list__loading"><LoaderCircle className="spin" size={18} />正在读取…</div> : apiKeys.length > 0 && <div className="api-key-list" role="list">{apiKeys.map((item) => <div role="listitem" key={item.id} className={`api-key-item ${item.active ? 'api-key-item--active' : ''} ${item.testStatus === 'error' ? 'api-key-item--error' : ''}`}><button type="button" className="api-key-item__select" onClick={() => switchApiKey(item.id)} disabled={Boolean(switchingApiKeyId || testingApiKeyId || savingApiKey)}><span><strong>{item.label}</strong><small>{health.providers?.find((provider) => provider.id === item.provider)?.label || item.provider} · {item.hint}{item.source === 'environment' ? ' · 环境变量' : ''}</small><small className={`api-key-item__health api-key-item__health--${item.testStatus}`}>{item.testStatus === 'healthy' ? `连接正常${item.testQuota?.remaining != null ? ` · 剩余 ${item.testQuota.remaining}/${item.testQuota.limit}` : ''}` : item.testStatus === 'error' ? `连接异常 · ${item.testMessage}` : '尚未测试'}</small></span>{item.active ? <em><Check size={14} />使用中</em> : switchingApiKeyId === item.id ? <LoaderCircle className="spin" size={16} /> : <em>切换</em>}</button><button type="button" className="api-key-item__edit" onClick={() => editApiKey(item)} disabled={Boolean(testingApiKeyId || switchingApiKeyId || savingApiKey || item.source === 'environment')} title={item.source === 'environment' ? '环境变量 Key 请修改服务器配置' : '修改名称和绑定平台'}><Pencil size={13} />编辑</button><button type="button" className="api-key-item__test" onClick={() => testApiKey(item.id)} disabled={Boolean(testingApiKeyId || switchingApiKeyId || savingApiKey)}>{testingApiKeyId === item.id ? <LoaderCircle className="spin" size={14} /> : <Activity size={14} />}测试</button></div>)}</div>}<div className="api-key-form">{editingApiKeyId && <div className="api-key-editing">正在修改现有 Key；保存后将使用新平台重新测试，Key 内容保持不变。</div>}<label className="field"><span>{editingApiKeyId ? '绑定平台' : 'API 平台'}</span><select value={apiProviderId} onChange={(event) => setApiProviderId(event.target.value)}>{(health.providers || [{ id: 'api-football', label: 'API-Football' }, { id: 'the-stats-api', label: 'TheStatsAPI' }, { id: 'the-sports-db', label: 'TheSportsDB' }]).map((provider) => <option key={provider.id} value={provider.id}>{provider.label}</option>)}</select></label><label className="field"><span>名称（可选）</span><input maxLength="40" value={apiKeyLabel} onChange={(event) => setApiKeyLabel(event.target.value)} placeholder="例如：比分备用账号" /></label>{!editingApiKeyId && <label className="field"><span>新增 API Key</span><input type="password" autoComplete="off" value={apiKeyValue} onChange={(event) => setApiKeyValue(event.target.value)} placeholder={apiProviderId === 'the-sports-db' ? '免费 Key 可填写 123' : '粘贴对应平台的 API Key'} /></label>}</div><div className="api-key-dialog__actions"><button type="button" className="button button--ghost" onClick={editingApiKeyId ? cancelApiKeyEdit : () => setApiKeyOpen(false)}>{editingApiKeyId ? '取消修改' : '完成'}</button><button className="button button--primary" disabled={savingApiKey || (!editingApiKeyId && !apiKeyValue.trim())}>{savingApiKey ? <LoaderCircle className="spin" size={17} /> : <KeyRound size={17} />}{editingApiKeyId ? '保存修改' : '保存并启用'}</button></div></form></div>}
 
       {alertTask && <div className="alert-overlay"><div className="alert-dialog"><span className="alert-dialog__icon"><BellRing size={32} /></span><p className="section-caption">监控提醒</p><h2>比分条件已达成</h2><p>{alertTask.lastMessage}</p><button className="button button--primary" onClick={() => { if (audioRef.current) audioRef.current.pause(); setAlertTask(null); }}>收到，停止提醒</button></div></div>}
       {toast && <div className="toast"><Check size={16} />{toast}</div>}
