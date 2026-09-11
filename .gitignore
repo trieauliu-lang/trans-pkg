@@ -7,3 +7,10 @@ data/settings.json
 data/team-translations.json
 *.log
 .DS_Store
+
+# 本地脚本和备份
+*.cjs
+*.bak
+*.bak2
+*.bak3
+*.bak-tencent
