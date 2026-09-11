@@ -9,7 +9,7 @@ import { createFixtureCache } from './fixtureCache.js';
 import { createProviderClient, PROVIDERS } from './providers.js';
 import {
   activateApiKey, addApiKey, getActiveApiKey, getApiKey, maskApiKey,
-  publicApiKeySettings, readApiKeySettings, saveApiKeySettings, updateApiKeyProfile, updateApiKeyTest,
+  publicApiKeySettings, readApiKeySettings, removeApiKey, saveApiKeySettings, updateApiKeyProfile, updateApiKeyTest,
 } from './apiKeySettings.js';
 import { getKnownTeamTranslations, translateTeamNames } from './teamTranslations.js';
 import { normalizeTaskSettings, validateTask } from './taskSettings.js';
@@ -294,6 +294,18 @@ app.patch('/api/settings/api-keys/:id', (request, response) => {
     });
     saveApiKeySettings(settingsFile, apiKeySettings);
     if (request.params.id === apiKeySettings.activeApiKeyId) applyActiveApiKey();
+    response.json(apiKeyPayload());
+  } catch (error) {
+    response.status(error.message === 'API Key 不存在' ? 404 : 400).json({ error: error.message });
+  }
+});
+
+app.delete('/api/settings/api-keys/:id', (request, response) => {
+  try {
+    const wasActive = request.params.id === apiKeySettings.activeApiKeyId;
+    apiKeySettings = removeApiKey(apiKeySettings, request.params.id);
+    saveApiKeySettings(settingsFile, apiKeySettings);
+    if (wasActive) applyActiveApiKey();
     response.json(apiKeyPayload());
   } catch (error) {
     response.status(error.message === 'API Key 不存在' ? 404 : 400).json({ error: error.message });

@@ -100,6 +100,17 @@ export function updateApiKeyProfile(settings, id, { label = '', provider } = {})
   };
 }
 
+export function removeApiKey(settings, id) {
+  const current = getApiKey(settings, id);
+  if (!current) throw new Error('API Key 不存在');
+  if (current.source === 'environment') throw new Error('环境变量 Key 需要从服务器配置中删除');
+  const apiKeys = settings.apiKeys.filter((item) => item.id !== id);
+  return {
+    apiKeys,
+    activeApiKeyId: settings.activeApiKeyId === id ? apiKeys[0]?.id || null : settings.activeApiKeyId,
+  };
+}
+
 export function activateApiKey(settings, id) {
   if (!settings.apiKeys.some((item) => item.id === id)) throw new Error('API Key 不存在');
   const lastUsedAt = new Date().toISOString();

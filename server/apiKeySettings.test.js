@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   activateApiKey, addApiKey, getActiveApiKey, maskApiKey, normalizeApiKey,
-  publicApiKeySettings, readApiKeySettings, saveApiKeySettings, updateApiKeyProfile, updateApiKeyTest,
+  publicApiKeySettings, readApiKeySettings, removeApiKey, saveApiKeySettings, updateApiKeyProfile, updateApiKeyTest,
 } from './apiKeySettings.js';
 
 test('normalizes and masks an API key without exposing it', () => {
@@ -92,4 +92,28 @@ test('rejects rebinding to a duplicate provider and changing an environment key 
   assert.throws(() => updateApiKeyProfile(settings, statsId, { provider: 'api-football' }), /已存在/);
   const environmentSettings = readApiKeySettings('missing-settings.json', 'environment-key');
   assert.throws(() => updateApiKeyProfile(environmentSettings, environmentSettings.activeApiKeyId, { provider: 'the-sports-db' }), /环境变量/);
+});
+
+test('deletes saved keys and selects a remaining key when the active one is removed', () => {
+  let settings = addApiKey({ apiKeys: [], activeApiKeyId: null }, 'first-key', '第一组');
+  const firstId = settings.activeApiKeyId;
+  settings = addApiKey(settings, 'second-key', '第二组', 'the-sports-db');
+  const secondId = settings.activeApiKeyId;
+  settings = removeApiKey(settings, secondId);
+  assert.equal(settings.apiKeys.length, 1);
+  assert.equal(settings.activeApiKeyId, firstId);
+  settings = removeApiKey(settings, firstId);
+  assert.deepEqual(settings, { apiKeys: [], activeApiKeyId: null });
+});
+
+test('deleting an inactive key preserves the active key and environment keys cannot be deleted', () => {
+  let settings = addApiKey({ apiKeys: [], activeApiKeyId: null }, 'first-key', '第一组');
+  const firstId = settings.activeApiKeyId;
+  settings = addApiKey(settings, 'second-key', '第二组');
+  const secondId = settings.activeApiKeyId;
+  settings = removeApiKey(settings, firstId);
+  assert.equal(settings.activeApiKeyId, secondId);
+  const environmentSettings = readApiKeySettings('missing-settings.json', 'environment-key');
+  assert.throws(() => removeApiKey(environmentSettings, environmentSettings.activeApiKeyId), /服务器配置/);
+  assert.throws(() => removeApiKey(settings, 'missing'), /不存在/);
 });
