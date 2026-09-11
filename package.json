@@ -15,7 +15,7 @@
     "lucide-react": "^0.468.0",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
-    "tencentcloud-sdk-nodejs-tmt": "^4.1.265",
+    "tencentcloud-sdk-nodejs": "^4.1.311",
     "undici": "^6.28.1"
   },
   "devDependencies": {
