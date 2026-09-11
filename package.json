@@ -10,6 +10,7 @@
     "test": "node --test server/*.test.js"
   },
   "dependencies": {
+    "@tencent-sdk/capi": "^2.0.3",
     "express": "^5.1.0",
     "football-team-names-zh": "^0.1.0",
     "lucide-react": "^0.468.0",
