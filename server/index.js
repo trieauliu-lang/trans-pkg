@@ -6,7 +6,10 @@ import crypto from 'node:crypto';
 import { evaluateTask } from './rules.js';
 import { createFootballClient, retryDelay } from './footballClient.js';
 import { createFixtureCache } from './fixtureCache.js';
-import { maskApiKey, normalizeApiKey, readSavedApiKey, saveApiKey } from './apiKeySettings.js';
+import {
+  activateApiKey, addApiKey, getActiveApiKey, maskApiKey,
+  publicApiKeySettings, readApiKeySettings, saveApiKeySettings,
+} from './apiKeySettings.js';
 import { getKnownTeamTranslations, translateTeamNames } from './teamTranslations.js';
 import { normalizeTaskSettings, validateTask } from './taskSettings.js';
 
@@ -18,8 +21,8 @@ const fixturesCacheFile = path.join(dataDir, 'fixtures-cache.json');
 const settingsFile = path.join(dataDir, 'settings.json');
 const port = Number(process.env.PORT || 8787);
 const environmentApiKey = process.env.API_FOOTBALL_KEY || '';
-let apiKey = readSavedApiKey(settingsFile)
-  || (environmentApiKey && environmentApiKey !== 'replace_with_your_api_key' ? environmentApiKey : '');
+let apiKeySettings = readApiKeySettings(settingsFile, environmentApiKey);
+let apiKey = getActiveApiKey(apiKeySettings);
 const liveCacheSeconds = Math.max(60, Number(process.env.API_FOOTBALL_LIVE_CACHE_SECONDS) || 300);
 const quotaReserve = Math.max(0, Number(process.env.API_FOOTBALL_QUOTA_RESERVE) || 10);
 const app = express();
@@ -102,6 +105,41 @@ function fixtureCacheKey(date, timezone = 'Asia/Shanghai') {
   return `${date}|${timezone}`;
 }
 
+function healthPayload() {
+  return {
+    ok: true,
+    apiConfigured: Boolean(apiKey),
+    apiKeyHint: maskApiKey(apiKey),
+    activeApiKeyId: apiKeySettings.activeApiKeyId,
+    apiKeyCount: apiKeySettings.apiKeys.length,
+    mode: apiKey ? 'live' : 'demo',
+    liveCacheSeconds,
+    quotaReserve,
+  };
+}
+
+function applyActiveApiKey() {
+  apiKey = getActiveApiKey(apiKeySettings);
+  footballRequest = createFootballClient({ apiKey });
+  fixtureCache = buildFixtureCache({});
+  saveFixtureCache({});
+  tasks.forEach((task) => {
+    if (task.status !== 'error') return;
+    task.revision = (task.revision || 0) + 1;
+    task.status = 'running';
+    task.nextCheckAt = new Date().toISOString();
+    task.error = null;
+    task.errorCode = null;
+    task.lastMessage = 'API Key 已切换，等待重新检查';
+  });
+  saveTasks();
+  broadcast('tasks-updated', tasks);
+}
+
+function apiKeyPayload() {
+  return { ...healthPayload(), ...publicApiKeySettings(apiKeySettings) };
+}
+
 async function getTaskFixtures(task) {
   if (!apiKey) {
     return { fixtures: task.fixtures.map((item) => ({
@@ -179,29 +217,30 @@ setInterval(() => {
 }, 5_000);
 
 app.get('/api/health', (_request, response) => {
-  response.json({ ok: true, apiConfigured: Boolean(apiKey), apiKeyHint: maskApiKey(apiKey), mode: apiKey ? 'live' : 'demo', liveCacheSeconds, quotaReserve });
+  response.json(healthPayload());
 });
+
+app.get('/api/settings/api-keys', (_request, response) => response.json(apiKeyPayload()));
 
 app.post('/api/settings/api-key', (request, response) => {
   try {
-    apiKey = saveApiKey(settingsFile, normalizeApiKey(request.body?.apiKey));
-    footballRequest = createFootballClient({ apiKey });
-    fixtureCache = buildFixtureCache({});
-    saveFixtureCache({});
-    tasks.forEach((task) => {
-      if (task.status !== 'error') return;
-      task.revision = (task.revision || 0) + 1;
-      task.status = 'running';
-      task.nextCheckAt = new Date().toISOString();
-      task.error = null;
-      task.errorCode = null;
-      task.lastMessage = 'API Key 已更新，等待重新检查';
-    });
-    saveTasks();
-    broadcast('tasks-updated', tasks);
-    response.json({ ok: true, apiConfigured: true, apiKeyHint: maskApiKey(apiKey), mode: 'live', liveCacheSeconds, quotaReserve });
+    apiKeySettings = addApiKey(apiKeySettings, request.body?.apiKey, request.body?.label);
+    saveApiKeySettings(settingsFile, apiKeySettings);
+    applyActiveApiKey();
+    response.json(apiKeyPayload());
   } catch (error) {
     response.status(400).json({ error: error.message });
+  }
+});
+
+app.post('/api/settings/api-keys/:id/activate', (request, response) => {
+  try {
+    apiKeySettings = activateApiKey(apiKeySettings, request.params.id);
+    saveApiKeySettings(settingsFile, apiKeySettings);
+    applyActiveApiKey();
+    response.json(apiKeyPayload());
+  } catch (error) {
+    response.status(404).json({ error: error.message });
   }
 });
 

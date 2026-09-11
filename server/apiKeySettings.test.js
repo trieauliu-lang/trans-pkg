@@ -3,7 +3,10 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { maskApiKey, normalizeApiKey, readSavedApiKey, saveApiKey } from './apiKeySettings.js';
+import {
+  activateApiKey, addApiKey, getActiveApiKey, maskApiKey, normalizeApiKey,
+  publicApiKeySettings, readApiKeySettings, saveApiKeySettings,
+} from './apiKeySettings.js';
 
 test('normalizes and masks an API key without exposing it', () => {
   assert.equal(normalizeApiKey('  abcdef123456  '), 'abcdef123456');
@@ -12,12 +15,38 @@ test('normalizes and masks an API key without exposing it', () => {
   assert.throws(() => normalizeApiKey('abc\ndef'), /格式/);
 });
 
-test('saves and reloads the local API key', () => {
+test('adds, deduplicates, names and switches cached keys', () => {
+  let settings = { apiKeys: [], activeApiKeyId: null };
+  settings = addApiKey(settings, 'first-secret-1111', '主要账号');
+  const firstId = settings.activeApiKeyId;
+  settings = addApiKey(settings, 'second-secret-2222', '备用账号');
+  const secondId = settings.activeApiKeyId;
+  assert.equal(settings.apiKeys.length, 2);
+  assert.equal(getActiveApiKey(settings), 'second-secret-2222');
+  settings = addApiKey(settings, ' first-secret-1111 ', '主账号更新名称');
+  assert.equal(settings.apiKeys.length, 2);
+  assert.equal(settings.apiKeys.find((item) => item.id === firstId).label, '主账号更新名称');
+  settings = activateApiKey(settings, secondId);
+  assert.equal(getActiveApiKey(settings), 'second-secret-2222');
+  assert.throws(() => activateApiKey(settings, 'missing'), /不存在/);
+});
+
+test('saves multiple keys, migrates legacy data and never exposes full values publicly', () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'match-pulse-key-'));
   const file = path.join(directory, 'settings.json');
   try {
-    saveApiKey(file, 'local-secret-key');
-    assert.equal(readSavedApiKey(file), 'local-secret-key');
+    fs.writeFileSync(file, JSON.stringify({ apiKey: 'legacy-secret-0000' }));
+    let settings = readApiKeySettings(file, 'environment-secret-9999');
+    assert.equal(settings.apiKeys.length, 2);
+    settings = addApiKey(settings, 'new-secret-1234', '新 Key');
+    saveApiKeySettings(file, settings);
+    const savedText = fs.readFileSync(file, 'utf8');
+    assert.ok(savedText.includes('legacy-secret-0000'));
+    assert.ok(savedText.includes('new-secret-1234'));
+    assert.ok(!savedText.includes('environment-secret-9999'));
+    const publicValue = JSON.stringify(publicApiKeySettings(settings));
+    assert.ok(publicValue.includes('••••1234'));
+    assert.ok(!publicValue.includes('new-secret-1234'));
     assert.ok(!fs.existsSync(`${file}.tmp`));
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
