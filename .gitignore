@@ -2,6 +2,7 @@ node_modules/
 dist/
 .env
 data/tasks.json
+data/fixtures-cache.json
 data/team-translations.json
 *.log
 .DS_Store

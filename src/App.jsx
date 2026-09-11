@@ -290,7 +290,7 @@ function TaskDetail({ task, translations, onAction }) {
       <div className="metric-strip">
         <div><Clock3 size={18} /><span>开始时间<strong>{formatDateTime(task.startAt)}</strong></span></div>
         <div><RefreshCw size={18} /><span>监控频次<strong>{task.intervalMinutes} 分钟</strong></span></div>
-        <div><Activity size={18} /><span>累计请求<strong>{task.requestCount} 次</strong></span></div>
+        <div><Activity size={18} /><span>实际 API 消耗<strong>{task.requestCount} 次</strong></span></div>
         <div><AlarmClock size={18} /><span>{task.status === 'scheduled' ? '计划启动' : '下次检查'}<strong>{formatDateTime(task.status === 'scheduled' ? task.startAt : task.nextCheckAt)}</strong></span></div>
       </div>
 
@@ -314,6 +314,7 @@ export default function App() {
   const [health, setHealth] = useState({ apiConfigured: false, mode: 'demo' });
   const [tasks, setTasks] = useState([]);
   const [fixtures, setFixtures] = useState([]);
+  const [fixtureMeta, setFixtureMeta] = useState({ cache: null, quota: null });
   const [activeTaskId, setActiveTaskId] = useState(null);
   const [selectedIds, setSelectedIds] = useState([]);
   const [date, setDate] = useState(localDateValue());
@@ -365,6 +366,9 @@ export default function App() {
       const body = await response.json();
       if (!response.ok) throw new Error(body.error || '赛程加载失败');
       setFixtures(body.fixtures);
+      setFixtureMeta({ cache: body.cache || null, quota: body.quota || null });
+      if (body.cache?.quotaProtected) showToast('每日额度已进入保留区，赛事列表暂用缓存；监控任务仍可查询');
+      else if (body.cache?.stale) showToast('比分服务暂时不可用，当前显示最近一次缓存');
     } catch (error) {
       showToast(error.message);
     } finally {
@@ -582,7 +586,7 @@ export default function App() {
         <section className="content-grid" id="fixtures">
           <div className="fixture-browser">
             <div className="section-heading">
-              <div className="section-heading__copy"><span className="section-index">1</span><div><h2>选择{monitorDateLabel(date)}的比赛</h2><p>{date} · 共 {visibleFixtures.length} 场</p></div></div>
+              <div className="section-heading__copy"><span className="section-index">1</span><div><h2>选择{monitorDateLabel(date)}的比赛</h2><p>{date} · 共 {visibleFixtures.length} 场{fixtureMeta.quota?.remaining != null ? ` · 今日剩余 ${fixtureMeta.quota.remaining}/${fixtureMeta.quota.limit}` : ''}{fixtureMeta.cache ? ` · ${fixtureMeta.cache.source === 'api' ? '刚从 API 更新' : '已使用服务端缓存'}` : ''}</p></div></div>
               <div className="fixture-browser__tools">
                 <div className="date-shortcuts">
                   {[0, 1, 2].map((days) => {
@@ -591,7 +595,7 @@ export default function App() {
                   })}
                 </div>
                 <label className="date-picker"><CalendarDays size={16} /><input type="date" min={localDateValue()} value={date} onChange={(event) => setDate(event.target.value)} /></label>
-                <button className="icon-button" onClick={loadFixtures} aria-label="刷新赛程"><RefreshCw size={17} className={loadingFixtures ? 'spin' : ''} /></button>
+                <button className="icon-button" onClick={loadFixtures} aria-label="刷新赛程" title="优先读取服务端缓存，不会在每次点击时消耗额度"><RefreshCw size={17} className={loadingFixtures ? 'spin' : ''} /></button>
               </div>
             </div>
             <div className="filter-row">

@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import crypto from 'node:crypto';
 import { evaluateTask } from './rules.js';
 import { createFootballClient, retryDelay } from './footballClient.js';
+import { createFixtureCache } from './fixtureCache.js';
 import { getKnownTeamTranslations, translateTeamNames } from './teamTranslations.js';
 import { normalizeTaskSettings, validateTask } from './taskSettings.js';
 
@@ -12,8 +13,11 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, '..');
 const dataDir = path.join(rootDir, 'data');
 const tasksFile = path.join(dataDir, 'tasks.json');
+const fixturesCacheFile = path.join(dataDir, 'fixtures-cache.json');
 const port = Number(process.env.PORT || 8787);
 const apiKey = process.env.API_FOOTBALL_KEY || '';
+const liveCacheSeconds = Math.max(60, Number(process.env.API_FOOTBALL_LIVE_CACHE_SECONDS) || 300);
+const quotaReserve = Math.max(0, Number(process.env.API_FOOTBALL_QUOTA_RESERVE) || 10);
 const app = express();
 const clients = new Set();
 
@@ -67,37 +71,63 @@ function broadcast(event, payload) {
 
 const footballRequest = createFootballClient({ apiKey });
 
+function readFixtureCache() {
+  try { return JSON.parse(fs.readFileSync(fixturesCacheFile, 'utf8')); } catch { return {}; }
+}
+
+function saveFixtureCache(value) {
+  fs.mkdirSync(dataDir, { recursive: true });
+  fs.writeFileSync(fixturesCacheFile, JSON.stringify(value));
+}
+
+const fixtureCache = createFixtureCache({
+  initial: readFixtureCache(),
+  liveTtlMs: liveCacheSeconds * 1000,
+  persist: saveFixtureCache,
+  loader: async (key) => {
+    const [date, timezone] = key.split('|');
+    return footballRequest('fixtures', { date, timezone });
+  },
+});
+
+function fixtureCacheKey(date, timezone = 'Asia/Shanghai') {
+  return `${date}|${timezone}`;
+}
+
 async function getTaskFixtures(task) {
   if (!apiKey) {
-    return task.fixtures.map((item) => ({
+    return { fixtures: task.fixtures.map((item) => ({
       ...item,
       fixture: { ...item.fixture, status: { short: 'FT', long: 'Match Finished', elapsed: 90 } },
       goals: item.fixture.id === task.fixtures[0].fixture.id ? { home: 2, away: 1 } : { home: 1, away: 0 },
-    }));
+    })), source: 'demo', fetchedAt: new Date().toISOString(), quota: null };
   }
 
   const selectedIds = new Set(task.fixtures.map((item) => String(item.fixture.id)));
   const monitorDate = task.monitorDate || task.fixtures[0]?.fixture?.date?.slice(0, 10);
-  const result = await footballRequest('fixtures', { date: monitorDate, timezone: 'Asia/Shanghai' });
+  const result = await fixtureCache.get(fixtureCacheKey(monitorDate));
   const fixtures = result.data.filter((item) => selectedIds.has(String(item.fixture.id)));
   if (fixtures.length !== selectedIds.size) {
     throw new Error(`API 未返回全部所选比赛（${fixtures.length}/${selectedIds.size}），将在下次继续检查`);
   }
-  return fixtures;
+  return { fixtures, source: result.source, fetchedAt: result.fetchedAt, quota: result.quota };
 }
 
 async function runTask(task) {
   const revision = task.revision || 0;
   const isCurrent = () => tasks.includes(task) && (task.revision || 0) === revision;
   const now = new Date().toISOString();
-  if (apiKey) task.requestCount += 1;
   try {
-    const fixtures = await getTaskFixtures(task);
+    const fixtureResult = await getTaskFixtures(task);
+    const { fixtures } = fixtureResult;
     if (!isCurrent()) return;
+    if (fixtureResult.source === 'api') task.requestCount += 1;
     const result = evaluateTask(task, fixtures);
     task.fixtures = fixtures;
     task.lastCheckedAt = now;
-    task.lastSucceededAt = new Date().toISOString();
+    task.lastSucceededAt = fixtureResult.fetchedAt || new Date().toISOString();
+    task.lastFetchSource = fixtureResult.source;
+    task.quota = fixtureResult.quota;
     task.consecutiveFailures = 0;
     task.errorCode = null;
     task.lastMessage = result.reason;
@@ -141,17 +171,32 @@ setInterval(() => {
 }, 5_000);
 
 app.get('/api/health', (_request, response) => {
-  response.json({ ok: true, apiConfigured: Boolean(apiKey), mode: apiKey ? 'live' : 'demo' });
+  response.json({ ok: true, apiConfigured: Boolean(apiKey), mode: apiKey ? 'live' : 'demo', liveCacheSeconds, quotaReserve });
 });
 
 app.get('/api/fixtures', async (request, response) => {
   try {
     if (!apiKey) return response.json({ fixtures: demoFixtures(request.query.date), mode: 'demo', quota: null });
-    const result = await footballRequest('fixtures', {
-      date: request.query.date,
-      timezone: request.query.timezone || 'Asia/Shanghai',
+    const date = String(request.query.date || '');
+    const timezone = String(request.query.timezone || 'Asia/Shanghai');
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return response.status(400).json({ error: '日期格式不正确' });
+    const result = await fixtureCache.get(fixtureCacheKey(date, timezone), {
+      allowStale: true,
+      protectQuota: true,
+      quotaReserve,
     });
-    response.json({ fixtures: result.data, mode: 'live', quota: result.quota });
+    response.json({
+      fixtures: result.data,
+      mode: 'live',
+      quota: result.quota,
+      cache: {
+        source: result.source,
+        fetchedAt: result.fetchedAt,
+        expiresAt: new Date(Date.parse(result.fetchedAt) + result.ttlMs).toISOString(),
+        stale: result.stale,
+        quotaProtected: Boolean(result.quotaProtected),
+      },
+    });
   } catch (error) {
     response.status(502).json({ error: error.message });
   }
