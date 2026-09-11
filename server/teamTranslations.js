@@ -1,6 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { TEAM_NAME_OVERRIDES as MANUAL_TEAM_NAME_OVERRIDES } from './teamNameOverrides.js';
+import { translateToChinese } from './tencentTranslator.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const dataDir = path.resolve(__dirname, '../data');
@@ -10,6 +12,7 @@ const HAS_CHINESE = /[\u3400-\u9fff]/;
 // Football names are proper nouns. Keep the common Chinese names here so a
 // literal machine translation never replaces a well-known club name.
 export const TEAM_NAME_OVERRIDES = Object.freeze({
+  ...MANUAL_TEAM_NAME_OVERRIDES,
   'AC Horsens': '霍森斯',
   'Al Ahli Doha': '多哈国民',
   'Al Ain': '艾因',
@@ -200,6 +203,7 @@ export const TEAM_NAME_OVERRIDES = Object.freeze({
   'West Ham United': '西汉姆联',
   'Wrexham': '雷克瑟姆',
   'Zbrojovka Brno U19': '布尔诺军械库U19',
+  ...MANUAL_TEAM_NAME_OVERRIDES,
 });
 
 const MACHINE_TRANSLATION_BLOCKLIST = ['半岛电视台', '哥林多前书', '公关', '胸罩', '发电机'];
@@ -207,6 +211,12 @@ const MACHINE_TRANSLATION_BLOCKLIST = ['半岛电视台', '哥林多前书', '�
 function normalizeName(value) {
   return typeof value === 'string' ? value.trim().replace(/\s+/g, ' ') : '';
 }
+
+function lookupKey(value) {
+  return normalizeName(value).normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+}
+
+const NORMALIZED_OVERRIDES = new Map(Object.entries(TEAM_NAME_OVERRIDES).map(([name, translated]) => [lookupKey(name), translated]));
 
 function readCache() {
   try {
@@ -230,7 +240,8 @@ function saveCache() {
 export function translateKnownTeamName(name) {
   const normalized = normalizeName(name);
   if (!normalized || HAS_CHINESE.test(normalized)) return normalized;
-  if (TEAM_NAME_OVERRIDES[normalized]) return TEAM_NAME_OVERRIDES[normalized];
+  const direct = TEAM_NAME_OVERRIDES[normalized] || NORMALIZED_OVERRIDES.get(lookupKey(normalized));
+  if (direct) return direct;
 
   const suffixPatterns = [
     [/^(.*?)\s+U(\d+)\s+W$/i, (base, age) => `${base}女足U${age}`],
@@ -242,7 +253,7 @@ export function translateKnownTeamName(name) {
   for (const [pattern, format] of suffixPatterns) {
     const match = normalized.match(pattern);
     if (!match) continue;
-    const baseTranslation = TEAM_NAME_OVERRIDES[normalizeName(match[1])];
+    const baseTranslation = TEAM_NAME_OVERRIDES[normalizeName(match[1])] || NORMALIZED_OVERRIDES.get(lookupKey(match[1]));
     if (baseTranslation) return format(baseTranslation, match[2]);
   }
   return '';
@@ -250,6 +261,19 @@ export function translateKnownTeamName(name) {
 
 export function getKnownTeamTranslations() {
   return { ...TEAM_NAME_OVERRIDES };
+}
+
+async function fetchTencentTranslations(names) {
+  const translations = {};
+  for (let index = 0; index < names.length; index += 6) {
+    const batch = names.slice(index, index + 6);
+    const values = await Promise.all(batch.map((name) => translateToChinese(name)));
+    batch.forEach((name, valueIndex) => {
+      const value = normalizeName(values[valueIndex]);
+      if (HAS_CHINESE.test(value) && !MACHINE_TRANSLATION_BLOCKLIST.some((word) => value.includes(word))) translations[name] = value;
+    });
+  }
+  return translations;
 }
 
 function escapeSparql(value) {
@@ -344,23 +368,27 @@ async function performTranslation(names) {
   const missing = [];
 
   for (const name of normalizedNames) {
-    const known = translateKnownTeamName(name) || cache[name];
+    const cached = HAS_CHINESE.test(cache[name] || '') ? cache[name] : '';
+    const known = translateKnownTeamName(name) || cached;
     if (known) translations[name] = known;
     else missing.push(name);
   }
 
   if (missing.length) {
-    const [wikiResult, machineResult] = await Promise.allSettled([
+    const [wikiResult, machineResult, tencentResult] = await Promise.allSettled([
       fetchWikidataNames(missing),
       fetchMachineTranslations(missing),
+      fetchTencentTranslations(missing),
     ]);
     if (machineResult.status === 'fulfilled') Object.assign(translations, machineResult.value);
+    if (tencentResult.status === 'fulfilled') Object.assign(translations, tencentResult.value);
     if (wikiResult.status === 'fulfilled') Object.assign(translations, wikiResult.value);
   }
 
   for (const name of normalizedNames) {
     translations[name] ||= name;
-    cache[name] = translations[name];
+    if (HAS_CHINESE.test(translations[name])) cache[name] = translations[name];
+    else delete cache[name];
   }
   if (normalizedNames.length) saveCache();
   return translations;

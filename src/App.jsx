@@ -11,7 +11,6 @@ import {
   CloudCog,
   Headphones,
   KeyRound,
-  ListFilter,
   LoaderCircle,
   Music2,
   Pencil,
@@ -37,18 +36,12 @@ const STATUS_META = {
 };
 
 const OPERATOR_LABELS = { gt: '大于', gte: '大于等于', eq: '等于', lt: '小于', lte: '小于等于' };
-const EVALUATE_WHEN_LABELS = { all_finished: '全部比赛结束后', each_finished: '每场比赛结束时', halftime: '比赛进入半场后' };
-const METRIC_LABELS = { total_goals: '总进球数', goal_difference: '比分差', home_trailing: '主队落后客队' };
+const EVALUATE_WHEN_LABELS = { in_play: '比赛开始后持续判断', all_finished: '全部比赛结束后', each_finished: '每场比赛结束时', halftime: '比赛进入半场后' };
+const METRIC_LABELS = { total_goals: '总进球数', goal_difference: '比分差', home_leading: '主队领先客队', home_trailing: '主队落后客队' };
 const FINISHED = new Set(['FT', 'AET', 'PEN']);
 const DEFAULT_AUDIO_URL = '/default-alert.mp3';
 const DEFAULT_AUDIO_NAME = '刘欢 - 好汉歌';
 const FIXTURE_SNAPSHOT_KEY = 'matchPulse:fixtureSnapshot:v2';
-const REGION_COUNTRIES = {
-  europe: new Set(['England', 'France', 'Germany', 'Italy', 'Spain', 'Portugal', 'Netherlands', 'Belgium', 'Scotland', 'Austria', 'Switzerland', 'Türkiye', 'Turkey', 'Greece', 'Denmark', 'Norway', 'Sweden', 'Poland', 'Czech-Republic', 'Croatia', 'Serbia', 'Romania', 'Ukraine', 'Armenia', 'Azerbaijan', 'Georgia', 'Kazakhstan']),
-  west_asia: new Set(['Saudi-Arabia', 'Qatar', 'United-Arab-Emirates', 'Bahrain', 'Kuwait', 'Oman', 'Jordan', 'Iraq', 'Iran', 'Israel']),
-  asia: new Set(['China', 'Japan', 'South-Korea', 'Thailand', 'Vietnam', 'Indonesia', 'Malaysia', 'Singapore', 'Australia', 'India', 'Uzbekistan']),
-  south_america: new Set(['Brazil', 'Argentina', 'Chile', 'Uruguay', 'Colombia', 'Ecuador', 'Peru', 'Paraguay', 'Bolivia', 'Venezuela']),
-};
 
 function compactFixture(fixture) {
   return {
@@ -111,13 +104,45 @@ function clearFixtureSnapshot() {
   } catch { /* Storage may be disabled. */ }
 }
 
-function fixtureRegion(fixture) {
-  const country = fixture.league.country || fixture.league.name.split(' · ')[0];
-  if (REGION_COUNTRIES.europe.has(country) || country === '英格兰') return 'europe';
-  if (REGION_COUNTRIES.west_asia.has(country) || country === '沙特阿拉伯') return 'west_asia';
-  if (REGION_COUNTRIES.asia.has(country)) return 'asia';
-  if (REGION_COUNTRIES.south_america.has(country) || country === '巴西') return 'south_america';
-  return 'other';
+function createMonitorRule(overrides = {}) {
+  return {
+    id: `rule-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    fixtureId: 'all',
+    matchScope: 'any',
+    evaluateWhen: 'in_play',
+    metric: 'total_goals',
+    operator: 'gt',
+    threshold: 2,
+    ...overrides,
+  };
+}
+
+function teamDisplayName(team, translations = {}) {
+  return translations[team?.name] || team?.zhName || team?.name || '未知球队';
+}
+
+function normalizedTaskRules(task) {
+  if (Array.isArray(task.rules) && task.rules.length) return task.rules;
+  return [{
+    id: 'legacy',
+    fixtureId: 'all',
+    matchScope: task.matchScope || 'any',
+    evaluateWhen: task.evaluateWhen || 'all_finished',
+    metric: task.metric || 'total_goals',
+    operator: task.operator || 'gt',
+    threshold: task.threshold ?? 0,
+  }];
+}
+
+function monitorRuleLabel(rule, fixtures, translations = {}) {
+  const fixture = fixtures.find((item) => String(item.fixture.id) === String(rule.fixtureId));
+  const target = fixture
+    ? `${teamDisplayName(fixture.teams.home, translations)} vs ${teamDisplayName(fixture.teams.away, translations)}`
+    : `所有已选比赛（${rule.matchScope === 'all' ? '全部同时满足' : '任意一场满足'}）`;
+  const condition = ['home_leading', 'home_trailing'].includes(rule.metric)
+    ? METRIC_LABELS[rule.metric]
+    : `${METRIC_LABELS[rule.metric] || '总进球数'} ${OPERATOR_LABELS[rule.operator] || '大于'} ${rule.threshold}`;
+  return `${target} · ${EVALUATE_WHEN_LABELS[rule.evaluateWhen] || '比赛开始后持续判断'} · ${condition}`;
 }
 
 function localDateValue(date = new Date()) {
@@ -191,8 +216,8 @@ function MatchCard({ fixture, selected, onToggle, compact = false, translations 
   const finished = FINISHED.has(fixture.fixture.status.short);
   const homeOriginal = fixture.teams.home.name;
   const awayOriginal = fixture.teams.away.name;
-  const homeName = fixture.teams.home.zhName || translations[homeOriginal] || homeOriginal;
-  const awayName = fixture.teams.away.zhName || translations[awayOriginal] || awayOriginal;
+  const homeName = translations[homeOriginal] || fixture.teams.home.zhName || homeOriginal;
+  const awayName = translations[awayOriginal] || fixture.teams.away.zhName || awayOriginal;
   return (
     <button
       type="button"
@@ -250,18 +275,22 @@ function CreateTaskPanel({ fixtures, selectedIds, setSelectedIds, monitorDate, t
     startMode: 'scheduled',
     startAt: defaultStartAt(monitorDate),
     intervalMinutes: 3,
-    evaluateWhen: 'all_finished',
-    matchScope: 'any',
-    metric: 'total_goals',
-    operator: 'gt',
-    threshold: 2,
+    rules: [createMonitorRule()],
   });
 
   const selectedFixtures = fixtures.filter((item) => selectedIds.includes(item.fixture.id));
   const update = (key, value) => setForm((current) => ({ ...current, [key]: value }));
-  const updateMetric = (metric) => setForm((current) => metric === 'home_trailing'
-    ? { ...current, metric, evaluateWhen: 'halftime', operator: 'lt', threshold: 0 }
-    : { ...current, metric });
+  const updateRule = (id, key, value) => setForm((current) => ({
+    ...current,
+    rules: current.rules.map((rule) => rule.id === id ? {
+      ...rule,
+      [key]: value,
+      ...(key === 'metric' && value === 'home_leading' ? { evaluateWhen: 'halftime', operator: 'gt', threshold: 0 } : {}),
+      ...(key === 'metric' && value === 'home_trailing' ? { evaluateWhen: 'halftime', operator: 'lt', threshold: 0 } : {}),
+    } : rule),
+  }));
+  const addRule = () => setForm((current) => ({ ...current, rules: [...current.rules, createMonitorRule()] }));
+  const removeRule = (id) => setForm((current) => ({ ...current, rules: current.rules.filter((rule) => rule.id !== id) }));
   const toggleFixture = (fixture) => setSelectedIds((current) => current.includes(fixture.fixture.id)
     ? current.filter((id) => id !== fixture.fixture.id)
     : [...current, fixture.fixture.id]);
@@ -290,10 +319,6 @@ function CreateTaskPanel({ fixtures, selectedIds, setSelectedIds, monitorDate, t
       setSubmitting(false);
     }
   }
-
-  const ruleSummary = form.metric === 'home_trailing'
-    ? `当${EVALUATE_WHEN_LABELS[form.evaluateWhen]}，如果${form.matchScope === 'any' ? '任意一场' : '全部比赛'}主队比分低于客队，播放提醒。`
-    : `当${EVALUATE_WHEN_LABELS[form.evaluateWhen]}，如果${form.matchScope === 'any' ? '任意一场' : '全部比赛'}的${METRIC_LABELS[form.metric]}${OPERATOR_LABELS[form.operator]} ${form.threshold}，播放提醒。`;
 
   return (
     <div className="drawer-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
@@ -324,14 +349,27 @@ function CreateTaskPanel({ fixtures, selectedIds, setSelectedIds, monitorDate, t
           </section>
 
           <section className="form-section">
-            <div className="form-section__title"><span>03</span><div><strong>触发规则</strong><small>支持半场后主队落后提醒</small></div></div>
-            <div className="field-grid">
-              <label className="field"><span>判断时机</span><select value={form.evaluateWhen} onChange={(event) => update('evaluateWhen', event.target.value)}><option value="halftime">比赛进入半场后</option><option value="all_finished">全部比赛结束后</option><option value="each_finished">每场比赛结束时</option></select></label>
-              <label className="field"><span>比赛范围</span><select value={form.matchScope} onChange={(event) => update('matchScope', event.target.value)}><option value="any">任意一场</option><option value="all">全部比赛</option></select></label>
-              <label className="field"><span>监控指标</span><select value={form.metric} onChange={(event) => updateMetric(event.target.value)}><option value="home_trailing">主队落后客队</option><option value="total_goals">总进球数</option><option value="goal_difference">比分差</option></select></label>
-              {form.metric !== 'home_trailing' && <label className="field"><span>比较条件</span><div className="condition-fields"><select value={form.operator} onChange={(event) => update('operator', event.target.value)}>{Object.entries(OPERATOR_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select><input type="number" min="0" value={form.threshold} onChange={(event) => update('threshold', event.target.value)} /></div></label>}
+            <div className="form-section__title"><span>03</span><div><strong>监控指标</strong><small>每个指标命中一次后，任务继续监控其他指标</small></div></div>
+            <div className="rule-list">
+              {form.rules.map((rule, index) => (
+                <div className="rule-card" key={rule.id}>
+                  <div className="rule-card__header">
+                    <strong>指标 {index + 1}</strong>
+                    {form.rules.length > 1 && <button type="button" onClick={() => removeRule(rule.id)}><Trash2 size={14} />删除</button>}
+                  </div>
+                  <div className="field-grid">
+                    <label className="field"><span>适用比赛</span><select value={rule.fixtureId} onChange={(event) => updateRule(rule.id, 'fixtureId', event.target.value)}><option value="all">所有已选比赛</option>{selectedFixtures.map((fixture) => <option key={fixture.fixture.id} value={fixture.fixture.id}>{teamDisplayName(fixture.teams.home, translations)} vs {teamDisplayName(fixture.teams.away, translations)}</option>)}</select></label>
+                    <label className="field"><span>判断时机</span><select value={rule.evaluateWhen} onChange={(event) => updateRule(rule.id, 'evaluateWhen', event.target.value)}><option value="in_play">比赛开始后持续判断</option><option value="halftime">比赛进入半场后</option><option value="each_finished">每场比赛结束时</option><option value="all_finished">全部比赛结束后</option></select></label>
+                    {rule.fixtureId === 'all' && <label className="field"><span>多场范围</span><select value={rule.matchScope || 'any'} onChange={(event) => updateRule(rule.id, 'matchScope', event.target.value)}><option value="any">任意一场满足</option><option value="all">全部比赛同时满足</option></select></label>}
+                    <label className="field"><span>监控指标</span><select value={rule.metric} onChange={(event) => updateRule(rule.id, 'metric', event.target.value)}><option value="home_leading">主队领先客队</option><option value="home_trailing">主队落后客队</option><option value="total_goals">总进球数</option><option value="goal_difference">比分差</option></select></label>
+                    {!['home_leading', 'home_trailing'].includes(rule.metric) && <label className="field"><span>比较条件</span><div className="condition-fields"><select value={rule.operator} onChange={(event) => updateRule(rule.id, 'operator', event.target.value)}>{Object.entries(OPERATOR_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select><input type="number" min="0" value={rule.threshold} onChange={(event) => updateRule(rule.id, 'threshold', event.target.value)} /></div></label>}
+                  </div>
+                  <div className="rule-summary"><Sparkles size={18} /><p>{monitorRuleLabel(rule, selectedFixtures, translations)}</p></div>
+                </div>
+              ))}
             </div>
-            <div className="rule-summary"><Sparkles size={18} /><p>{ruleSummary}</p></div>
+            <button type="button" className="add-rule-button" onClick={addRule} disabled={form.rules.length >= 20}><Plus size={15} />添加监控指标</button>
+            <p className="rule-list-note">同一指标对同一场比赛只提醒一次，后续轮询会继续判断尚未命中的指标。</p>
           </section>
 
           <div className="task-drawer__actions">
@@ -347,6 +385,7 @@ function CreateTaskPanel({ fixtures, selectedIds, setSelectedIds, monitorDate, t
 function TaskDetail({ task, translations, onAction }) {
   if (!task) return null;
   const meta = STATUS_META[task.status] || STATUS_META.stopped;
+  const rules = normalizedTaskRules(task);
   return (
     <section className="task-detail">
       <div className="task-detail__header">
@@ -367,7 +406,14 @@ function TaskDetail({ task, translations, onAction }) {
 
       <div className={`monitor-beam monitor-beam--${meta.tone}`}>
         <div className="monitor-beam__copy"><span>提醒规则</span><strong>{task.status === 'running' ? '正在监控' : meta.label}</strong></div>
-        <div className="monitor-beam__rule">{EVALUATE_WHEN_LABELS[task.evaluateWhen] || '全部比赛结束后'} · {task.matchScope === 'any' ? '任意一场' : '全部比赛'} · {task.metric === 'home_trailing' ? '主队落后客队' : `${METRIC_LABELS[task.metric] || '总进球数'} ${OPERATOR_LABELS[task.operator]} ${task.threshold}`}</div>
+        <div className="monitor-beam__rule">{rules.length} 个监控指标 · 已触发 {task.triggerCount || 0} 次 · 命中后继续监控</div>
+      </div>
+
+      <div className="task-rule-list">
+        {rules.map((rule, index) => {
+          const firedCount = (task.triggeredRuleKeys || []).filter((key) => key.startsWith(`${rule.id}:`)).length;
+          return <div className={`task-rule-item ${firedCount ? 'task-rule-item--fired' : ''}`} key={rule.id || index}><span>{firedCount ? <Check size={13} /> : index + 1}</span><p>{monitorRuleLabel(rule, task.fixtures, translations)}</p><em>{firedCount ? `已提醒 ${firedCount} 次` : '监控中'}</em></div>;
+        })}
       </div>
 
       <p className={`data-freshness ${task.error ? 'data-freshness--stale' : ''}`}>
@@ -382,6 +428,7 @@ function TaskDetail({ task, translations, onAction }) {
 }
 
 export default function App() {
+  const [activePage, setActivePage] = useState(() => window.location.hash === '#monitor' ? 'monitor' : 'fixtures');
   const [initialFixtureSnapshot] = useState(readFixtureSnapshot);
   const [health, setHealth] = useState({ apiConfigured: false, mode: 'demo' });
   const [tasks, setTasks] = useState([]);
@@ -391,7 +438,6 @@ export default function App() {
   const [activeTaskId, setActiveTaskId] = useState(null);
   const [selectedIds, setSelectedIds] = useState([]);
   const [date, setDate] = useState(initialFixtureSnapshot?.date || localDateValue());
-  const [regionFilter, setRegionFilter] = useState('all');
   const [fixtureSearch, setFixtureSearch] = useState('');
   const [visibleCount, setVisibleCount] = useState(24);
   const [loadingFixtures, setLoadingFixtures] = useState(false);
@@ -425,7 +471,6 @@ export default function App() {
   const visibleFixtures = useMemo(() => {
     const keyword = fixtureSearch.trim().toLocaleLowerCase();
     return fixtures
-      .filter((fixture) => regionFilter === 'all' || fixtureRegion(fixture) === regionFilter)
       .filter((fixture) => !keyword || [
         fixture.league.name,
         fixture.league.country,
@@ -436,12 +481,26 @@ export default function App() {
       ]
         .some((value) => value?.toLocaleLowerCase().includes(keyword)))
       .sort((left, right) => Date.parse(left.fixture.date) - Date.parse(right.fixture.date));
-  }, [fixtures, regionFilter, fixtureSearch, teamTranslations]);
+  }, [fixtures, fixtureSearch, teamTranslations]);
   const displayedFixtures = useMemo(() => visibleFixtures.slice(0, visibleCount), [visibleFixtures, visibleCount]);
 
   function showToast(message) {
     setToast(message);
     window.setTimeout(() => setToast(''), 3200);
+  }
+
+  function navigatePage(page) {
+    setActivePage(page);
+    window.history.replaceState(null, '', page === 'monitor' ? '#monitor' : '#fixtures');
+  }
+
+  function beginCreateTask() {
+    if (!selectedIds.length) {
+      navigatePage('fixtures');
+      showToast('请先在比赛查询页选择至少一场比赛');
+      return;
+    }
+    setDrawerOpen(true);
   }
 
   async function restoreCachedFixtures(value, { keepExisting = false } = {}) {
@@ -728,7 +787,7 @@ export default function App() {
     };
   }, []);
 
-  useEffect(() => { setVisibleCount(24); }, [date, regionFilter, fixtureSearch]);
+  useEffect(() => { setVisibleCount(24); }, [date, fixtureSearch]);
 
   useEffect(() => {
     const candidates = [...displayedFixtures, ...(activeTask?.fixtures || [])]
@@ -761,6 +820,11 @@ export default function App() {
   useEffect(() => {
     const events = new EventSource('/api/events');
     events.addEventListener('tasks-updated', (event) => setTasks(JSON.parse(event.data)));
+    events.addEventListener('api-usage', (event) => {
+      const body = JSON.parse(event.data);
+      setHealth(body);
+      setApiKeys(body.apiKeys || []);
+    });
     events.addEventListener('task-triggered', (event) => {
       const task = JSON.parse(event.data);
       setAlertTask(task);
@@ -794,19 +858,19 @@ export default function App() {
   return (
     <div className="app-shell">
       <header className="topbar">
-        <a className="brand" href="#top" aria-label="比分提醒首页"><span className="brand__mark"><Activity size={19} /></span><span>比分提醒</span></a>
-        <nav className="topbar__nav" aria-label="页面导航"><a href="#fixtures">比赛</a><a href="#tasks">任务</a></nav>
+        <button className="brand" type="button" onClick={() => navigatePage('fixtures')} aria-label="比分提醒首页"><span className="brand__mark"><Activity size={19} /></span><span>比分提醒</span></button>
+        <nav className="topbar__nav" aria-label="页面导航"><button className={activePage === 'fixtures' ? 'is-active' : ''} onClick={() => navigatePage('fixtures')}>查询比赛</button><button className={activePage === 'monitor' ? 'is-active' : ''} onClick={() => navigatePage('monitor')}>监控管理</button></nav>
         <div className="topbar__actions">
           <button className={`api-state ${health.activeApiKeyStatus === 'error' ? 'api-state--error' : health.apiConfigured ? 'api-state--live' : ''}`} onClick={openApiKeySettings} title="管理、测试和切换比分 API">{health.activeApiKeyStatus === 'error' ? <Zap size={16} /> : <KeyRound size={16} />}<span>{health.apiConfigured ? `${health.providerLabel || 'API'} ${health.apiKeyHint || '已配置'}${health.activeApiKeyStatus === 'error' ? ' · 异常' : ''}${health.apiKeyCount > 1 ? ` · ${health.apiKeyCount} 个` : ''}` : '导入 API Key'}</span></button>
           <button className={`sound-control ${soundEnabled ? 'sound-control--on' : ''}`} onClick={() => enableSound(true)}><Volume2 size={17} />{soundEnabled ? '声音已启用' : '启用声音'}</button>
-          <button className="button button--primary button--small" onClick={() => setDrawerOpen(true)}><Plus size={17} />新建监控</button>
+          <button className="button button--primary button--small" onClick={beginCreateTask}><Plus size={17} />新建监控</button>
         </div>
       </header>
 
-      <aside className="sidebar" id="tasks">
+      {activePage === 'monitor' && <aside className="sidebar" id="tasks">
         <div className="sidebar__label"><span>监控任务</span><strong>{tasks.length}</strong></div>
         <nav className="task-list" aria-label="监控任务列表">
-          {tasks.map((task) => <TaskListItem key={task.id} task={task} active={activeTask?.id === task.id} onClick={() => setActiveTaskId(task.id)} />)}
+          {tasks.map((task) => <TaskListItem key={task.id} task={task} active={activeTask?.id === task.id} onClick={() => { setActiveTaskId(task.id); navigatePage('monitor'); }} />)}
           {!tasks.length && <p className="sidebar__empty">暂无任务<br />从右上角创建第一个监控</p>}
         </nav>
         <div className="sound-card">
@@ -816,14 +880,14 @@ export default function App() {
           <label className="icon-button" aria-label="上传提醒音乐"><Music2 size={17} /><input type="file" accept="audio/*" onChange={handleAudioFile} /></label>
           <audio ref={audioRef} src={audioUrl} preload="auto" />
         </div>
-      </aside>
+      </aside>}
 
-      <main id="top" className="workspace">
+      <main id="top" className={`workspace ${activePage === 'fixtures' ? 'workspace--full' : ''}`}>
         <section className="page-header">
           <div className="page-header__copy">
             <p className="section-caption">比赛比分提醒</p>
-            <h1>比赛监控</h1>
-            <p>选择比赛、设置开始时间和触发条件，达成后播放提醒歌曲。</p>
+            <h1>{activePage === 'fixtures' ? '查询比赛' : '监控管理'}</h1>
+            <p>{activePage === 'fixtures' ? '查询并选择比赛，已有查询结果会从缓存自动恢复。' : '查看任务状态、多个监控指标与实时提醒记录。'}</p>
           </div>
           <dl className="summary-list">
             <div><dt>进行中的任务</dt><dd>{runningCount}</dd></div>
@@ -834,7 +898,7 @@ export default function App() {
 
         {!health.apiConfigured && <div className="demo-notice" role="status"><CloudCog size={18} /><div><strong>当前显示演示比赛</strong><span>尚未连接 API-Football，页面中的比赛不是真实赛程。</span></div></div>}
 
-        <section className="content-grid" id="fixtures">
+        {activePage === 'fixtures' && <section className="content-grid" id="fixtures">
           <div className="fixture-browser">
             <div className="section-heading">
               <div className="section-heading__copy"><span className="section-index">1</span><div><h2>选择{monitorDateLabel(date)}的比赛</h2><p>{date} · 共 {visibleFixtures.length} 场{fixtureMeta.quota?.remaining != null ? ` · 今日剩余 ${fixtureMeta.quota.remaining}/${fixtureMeta.quota.limit}` : ''}{fixtureMeta.cache ? ` · ${fixtureMeta.cache.source === 'api' ? '刚从 API 更新' : '已使用服务端缓存'}` : ''}</p></div></div>
@@ -850,23 +914,20 @@ export default function App() {
               </div>
             </div>
             <div className="filter-row">
-              {[['all', '全部赛事'], ['europe', '欧洲'], ['west_asia', '西亚'], ['asia', '亚洲'], ['south_america', '南美']].map(([value, label], index) => (
-                <button key={value} className={`filter-chip ${regionFilter === value ? 'filter-chip--active' : ''}`} onClick={() => setRegionFilter(value)}>{index === 0 && <ListFilter size={14} />}{label}</button>
-              ))}
               <label className="fixture-search"><Search size={14} /><input value={fixtureSearch} onChange={(event) => setFixtureSearch(event.target.value)} placeholder="搜索球队或联赛" aria-label="搜索球队或联赛" /></label>
               <span>{selectedIds.length} 场已选择</span>
             </div>
             {loadingFixtures ? <div className="loading-state"><LoaderCircle className="spin" /><span>正在查询比赛…</span></div> : visibleFixtures.length ? <><div className="fixture-grid">{displayedFixtures.map((fixture) => <MatchCard key={fixture.fixture.id} fixture={fixture} translations={teamTranslations} selected={selectedIds.includes(fixture.fixture.id)} onToggle={toggleFixture} />)}</div>{visibleCount < visibleFixtures.length && <button className="load-more" onClick={() => setVisibleCount((count) => count + 24)}>显示更多比赛（剩余 {visibleFixtures.length - visibleCount} 场）</button>}</> : <div className="loading-state"><Search /><span>{hasQueriedFixtures ? '没有找到符合条件的比赛' : '选择日期后点击“查询比赛”，页面不会自动消耗 API 额度'}</span></div>}
             {selectedIds.length > 0 && <div className="selection-bar"><div><Check size={17} /><span>已锁定 <strong>{selectedIds.length}</strong> 场目标</span></div><button className="button button--primary button--small" onClick={() => setDrawerOpen(true)}>配置规则<ChevronRight size={16} /></button></div>}
           </div>
-        </section>
+        </section>}
 
-        {activeTask ? <TaskDetail task={activeTask} translations={teamTranslations} onAction={taskAction} /> : <EmptyState onCreate={() => setDrawerOpen(true)} />}
+        {activePage === 'monitor' && (activeTask ? <TaskDetail task={activeTask} translations={teamTranslations} onAction={taskAction} /> : <EmptyState onCreate={() => navigatePage('fixtures')} />)}
       </main>
 
-      {drawerOpen && <CreateTaskPanel fixtures={fixtures} selectedIds={selectedIds} setSelectedIds={setSelectedIds} monitorDate={date} translations={teamTranslations} onClose={() => setDrawerOpen(false)} onError={showToast} onArmSound={() => enableSound(false)} onCreated={(task) => { setDrawerOpen(false); setSelectedIds([]); setActiveTaskId(task.id); loadTasks(); showToast('监控任务已创建，声音提醒已启用'); }} />}
+      {drawerOpen && <CreateTaskPanel fixtures={fixtures} selectedIds={selectedIds} setSelectedIds={setSelectedIds} monitorDate={date} translations={teamTranslations} onClose={() => setDrawerOpen(false)} onError={showToast} onArmSound={() => enableSound(false)} onCreated={(task) => { setDrawerOpen(false); setSelectedIds([]); setActiveTaskId(task.id); navigatePage('monitor'); loadTasks(); showToast('监控任务已创建，声音提醒已启用'); }} />}
 
-      {apiKeyOpen && <div className="alert-overlay" onMouseDown={(event) => event.target === event.currentTarget && setApiKeyOpen(false)}><form className="alert-dialog api-key-dialog" onSubmit={importApiKey}><span className="alert-dialog__icon"><KeyRound size={30} /></span><p className="section-caption">API 设置</p><h2>管理比分 API</h2><p>每个 Key 绑定一个平台；修改现有 Key 的平台后，需要重新测试连接。</p>{loadingApiKeys ? <div className="api-key-list__loading"><LoaderCircle className="spin" size={18} />正在读取…</div> : apiKeys.length > 0 && <div className="api-key-list" role="list">{apiKeys.map((item) => <div role="listitem" key={item.id} className={`api-key-item ${item.active ? 'api-key-item--active' : ''} ${item.testStatus === 'error' ? 'api-key-item--error' : ''}`}><button type="button" className="api-key-item__select" onClick={() => switchApiKey(item.id)} disabled={Boolean(switchingApiKeyId || testingApiKeyId || deletingApiKeyId || savingApiKey)}><span><strong>{item.label}</strong><small>{health.providers?.find((provider) => provider.id === item.provider)?.label || item.provider} · {item.hint}{item.source === 'environment' ? ' · 环境变量' : ''}</small><small className={`api-key-item__health api-key-item__health--${item.testStatus}`}>{item.testStatus === 'healthy' ? `连接正常${item.testQuota?.remaining != null ? ` · 剩余 ${item.testQuota.remaining}/${item.testQuota.limit}` : ''}` : item.testStatus === 'error' ? `连接异常 · ${item.testMessage}` : '尚未测试'}</small></span>{item.active ? <em><Check size={14} />使用中</em> : switchingApiKeyId === item.id ? <LoaderCircle className="spin" size={16} /> : <em>切换</em>}</button><button type="button" className="api-key-item__edit" onClick={() => editApiKey(item)} disabled={Boolean(testingApiKeyId || switchingApiKeyId || deletingApiKeyId || savingApiKey || item.source === 'environment')} title={item.source === 'environment' ? '环境变量 Key 请修改服务器配置' : '修改名称和绑定平台'}><Pencil size={13} />编辑</button><button type="button" className="api-key-item__test" onClick={() => testApiKey(item.id)} disabled={Boolean(testingApiKeyId || switchingApiKeyId || deletingApiKeyId || savingApiKey)}>{testingApiKeyId === item.id ? <LoaderCircle className="spin" size={14} /> : <Activity size={14} />}测试</button><button type="button" className="api-key-item__delete" onClick={() => deleteApiKey(item)} disabled={Boolean(testingApiKeyId || switchingApiKeyId || deletingApiKeyId || savingApiKey || item.source === 'environment')} title={item.source === 'environment' ? '环境变量 Key 请从服务器配置中删除' : '删除 API Key'}>{deletingApiKeyId === item.id ? <LoaderCircle className="spin" size={14} /> : <Trash2 size={14} />}</button></div>)}</div>}<div className="api-key-form">{editingApiKeyId && <div className="api-key-editing">正在修改现有 Key；保存后将使用新平台重新测试，Key 内容保持不变。</div>}<label className="field"><span>{editingApiKeyId ? '绑定平台' : 'API 平台'}</span><select value={apiProviderId} onChange={(event) => setApiProviderId(event.target.value)}>{(health.providers || [{ id: 'api-football', label: 'API-Football' }, { id: 'the-stats-api', label: 'TheStatsAPI' }, { id: 'the-sports-db', label: 'TheSportsDB' }]).map((provider) => <option key={provider.id} value={provider.id}>{provider.label}</option>)}</select></label><label className="field"><span>名称（可选）</span><input maxLength="40" value={apiKeyLabel} onChange={(event) => setApiKeyLabel(event.target.value)} placeholder="例如：比分备用账号" /></label>{!editingApiKeyId && <label className="field"><span>新增 API Key</span><input type="password" autoComplete="off" value={apiKeyValue} onChange={(event) => setApiKeyValue(event.target.value)} placeholder={apiProviderId === 'the-sports-db' ? '免费 Key 可填写 123' : '粘贴对应平台的 API Key'} /></label>}</div><div className="api-key-dialog__actions"><button type="button" className="button button--ghost" onClick={editingApiKeyId ? cancelApiKeyEdit : () => setApiKeyOpen(false)}>{editingApiKeyId ? '取消修改' : '完成'}</button><button className="button button--primary" disabled={savingApiKey || deletingApiKeyId || (!editingApiKeyId && !apiKeyValue.trim())}>{savingApiKey ? <LoaderCircle className="spin" size={17} /> : <KeyRound size={17} />}{editingApiKeyId ? '保存修改' : '保存并启用'}</button></div></form></div>}
+      {apiKeyOpen && <div className="alert-overlay" onMouseDown={(event) => event.target === event.currentTarget && setApiKeyOpen(false)}><form className="alert-dialog api-key-dialog" onSubmit={importApiKey}><span className="alert-dialog__icon"><KeyRound size={30} /></span><p className="section-caption">API 设置</p><h2>管理比分 API</h2><p>每个 Key 绑定一个平台；请求次数按北京时间每天独立统计并实时更新。</p>{loadingApiKeys ? <div className="api-key-list__loading"><LoaderCircle className="spin" size={18} />正在读取…</div> : apiKeys.length > 0 && <div className="api-key-list" role="list">{apiKeys.map((item) => <div role="listitem" key={item.id} className={`api-key-item ${item.active ? 'api-key-item--active' : ''} ${item.testStatus === 'error' ? 'api-key-item--error' : ''}`}><button type="button" className="api-key-item__select" onClick={() => switchApiKey(item.id)} disabled={Boolean(switchingApiKeyId || testingApiKeyId || deletingApiKeyId || savingApiKey)}><span><strong>{item.label}</strong><small>{health.providers?.find((provider) => provider.id === item.provider)?.label || item.provider} · {item.hint}{item.source === 'environment' ? ' · 环境变量' : ''}</small><small className="api-key-item__usage">今日请求 {item.todayUsage?.total || 0} 次 · 比赛 {item.todayUsage?.fixtures || 0} · 测试 {item.todayUsage?.tests || 0}</small><small className={`api-key-item__health api-key-item__health--${item.testStatus}`}>{item.testStatus === 'healthy' ? `连接正常${item.testQuota?.remaining != null ? ` · 剩余 ${item.testQuota.remaining}/${item.testQuota.limit}` : ''}` : item.testStatus === 'error' ? `连接异常 · ${item.testMessage}` : '尚未测试'}</small></span>{item.active ? <em><Check size={14} />使用中</em> : switchingApiKeyId === item.id ? <LoaderCircle className="spin" size={16} /> : <em>切换</em>}</button><button type="button" className="api-key-item__edit" onClick={() => editApiKey(item)} disabled={Boolean(testingApiKeyId || switchingApiKeyId || deletingApiKeyId || savingApiKey || item.source === 'environment')} title={item.source === 'environment' ? '环境变量 Key 请修改服务器配置' : '修改名称和绑定平台'}><Pencil size={13} />编辑</button><button type="button" className="api-key-item__test" onClick={() => testApiKey(item.id)} disabled={Boolean(testingApiKeyId || switchingApiKeyId || deletingApiKeyId || savingApiKey)}>{testingApiKeyId === item.id ? <LoaderCircle className="spin" size={14} /> : <Activity size={14} />}测试</button><button type="button" className="api-key-item__delete" onClick={() => deleteApiKey(item)} disabled={Boolean(testingApiKeyId || switchingApiKeyId || deletingApiKeyId || savingApiKey || item.source === 'environment')} title={item.source === 'environment' ? '环境变量 Key 请从服务器配置中删除' : '删除 API Key'}>{deletingApiKeyId === item.id ? <LoaderCircle className="spin" size={14} /> : <Trash2 size={14} />}</button></div>)}</div>}<div className="api-key-form">{editingApiKeyId && <div className="api-key-editing">正在修改现有 Key；保存后将使用新平台重新测试，Key 内容保持不变。</div>}<label className="field"><span>{editingApiKeyId ? '绑定平台' : 'API 平台'}</span><select value={apiProviderId} onChange={(event) => setApiProviderId(event.target.value)}>{(health.providers || [{ id: 'api-football', label: 'API-Football' }, { id: 'the-stats-api', label: 'TheStatsAPI' }, { id: 'the-sports-db', label: 'TheSportsDB' }]).map((provider) => <option key={provider.id} value={provider.id}>{provider.label}</option>)}</select></label><label className="field"><span>名称（可选）</span><input maxLength="40" value={apiKeyLabel} onChange={(event) => setApiKeyLabel(event.target.value)} placeholder="例如：比分备用账号" /></label>{!editingApiKeyId && <label className="field"><span>新增 API Key</span><input type="password" autoComplete="off" value={apiKeyValue} onChange={(event) => setApiKeyValue(event.target.value)} placeholder={apiProviderId === 'the-sports-db' ? '免费 Key 可填写 123' : '粘贴对应平台的 API Key'} /></label>}</div><div className="api-key-dialog__actions"><button type="button" className="button button--ghost" onClick={editingApiKeyId ? cancelApiKeyEdit : () => setApiKeyOpen(false)}>{editingApiKeyId ? '取消修改' : '完成'}</button><button className="button button--primary" disabled={savingApiKey || deletingApiKeyId || (!editingApiKeyId && !apiKeyValue.trim())}>{savingApiKey ? <LoaderCircle className="spin" size={17} /> : <KeyRound size={17} />}{editingApiKeyId ? '保存修改' : '保存并启用'}</button></div></form></div>}
 
       {alertTask && <div className="alert-overlay"><div className="alert-dialog"><span className="alert-dialog__icon"><BellRing size={32} /></span><p className="section-caption">监控提醒</p><h2>比分条件已达成</h2><p>{alertTask.lastMessage}</p><button className="button button--primary" onClick={() => { if (audioRef.current) audioRef.current.pause(); setAlertTask(null); }}>收到，停止提醒</button></div></div>}
       {toast && <div className="toast"><Check size={16} />{toast}</div>}

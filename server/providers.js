@@ -110,12 +110,13 @@ function quotaFromHeaders(headers) {
   };
 }
 
-function createTheStatsApiClient({ apiKey, timeoutMs = 15_000, fetchImpl = fetch, dispatcher } = {}) {
+function createTheStatsApiClient({ apiKey, timeoutMs = 15_000, fetchImpl = fetch, dispatcher, onRequest = () => {} } = {}) {
   const agent = dispatcher ?? new EnvHttpProxyAgent();
   async function request(endpoint, params = {}) {
     const url = new URL(`https://api.thestatsapi.com/api/${endpoint}`);
     Object.entries(params).forEach(([key, value]) => value != null && value !== '' && url.searchParams.set(key, value));
     try {
+      onRequest();
       const response = await fetchImpl(url, {
         headers: { Authorization: `Bearer ${apiKey}`, Accept: 'application/json' },
         dispatcher: agent,
@@ -152,12 +153,13 @@ function createTheStatsApiClient({ apiKey, timeoutMs = 15_000, fetchImpl = fetch
   };
 }
 
-function createTheSportsDbClient({ apiKey, timeoutMs = 15_000, fetchImpl = fetch, dispatcher } = {}) {
+function createTheSportsDbClient({ apiKey, timeoutMs = 15_000, fetchImpl = fetch, dispatcher, onRequest = () => {} } = {}) {
   const agent = dispatcher ?? new EnvHttpProxyAgent();
   async function request(endpoint, params = {}, collection) {
     const url = new URL(`https://www.thesportsdb.com/api/v1/json/${encodeURIComponent(apiKey)}/${endpoint}`);
     Object.entries(params).forEach(([key, value]) => value != null && value !== '' && url.searchParams.set(key, value));
     try {
+      onRequest();
       const response = await fetchImpl(url, {
         headers: { Accept: 'application/json' }, dispatcher: agent,
         signal: AbortSignal.timeout(timeoutMs),
@@ -201,11 +203,11 @@ function createTheSportsDbClient({ apiKey, timeoutMs = 15_000, fetchImpl = fetch
   };
 }
 
-export function createProviderClient({ providerId, apiKey, fetchImpl, dispatcher, timeoutMs } = {}) {
+export function createProviderClient({ providerId, apiKey, fetchImpl, dispatcher, timeoutMs, onRequest } = {}) {
   const id = normalizeProviderId(providerId);
-  if (id === 'the-stats-api') return createTheStatsApiClient({ apiKey, fetchImpl, dispatcher, timeoutMs });
-  if (id === 'the-sports-db') return createTheSportsDbClient({ apiKey, fetchImpl, dispatcher, timeoutMs });
-  const request = createFootballClient({ apiKey, fetchImpl, dispatcher, timeoutMs });
+  if (id === 'the-stats-api') return createTheStatsApiClient({ apiKey, fetchImpl, dispatcher, timeoutMs, onRequest });
+  if (id === 'the-sports-db') return createTheSportsDbClient({ apiKey, fetchImpl, dispatcher, timeoutMs, onRequest });
+  const request = createFootballClient({ apiKey, fetchImpl, dispatcher, timeoutMs, onRequest });
   return {
     fetchFixtures: (date, timezone = 'Asia/Shanghai') => request('fixtures', { date, timezone }),
     test: async () => ({ quota: (await request('timezone')).quota }),

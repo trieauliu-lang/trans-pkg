@@ -5,8 +5,34 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   activateApiKey, addApiKey, getActiveApiKey, maskApiKey, normalizeApiKey,
-  publicApiKeySettings, readApiKeySettings, removeApiKey, saveApiKeySettings, updateApiKeyProfile, updateApiKeyTest,
+  publicApiKeySettings, readApiKeySettings, recordApiKeyRequest, removeApiKey, saveApiKeySettings, updateApiKeyProfile, updateApiKeyTest,
 } from './apiKeySettings.js';
+
+test('counts each upstream request per key and per Shanghai calendar day', () => {
+  let settings = addApiKey({ apiKeys: [], activeApiKeyId: null }, 'usage-key', '用量测试');
+  const id = settings.activeApiKeyId;
+  settings = recordApiKeyRequest(settings, id, { at: new Date('2026-09-11T15:59:00Z'), kind: 'fixtures' });
+  settings = recordApiKeyRequest(settings, id, { at: new Date('2026-09-11T16:01:00Z'), kind: 'test' });
+  settings = recordApiKeyRequest(settings, id, { at: new Date('2026-09-11T16:02:00Z'), kind: 'fixtures' });
+  assert.deepEqual(settings.apiKeys[0].usageByDate['2026-09-11'], { total: 1, fixtures: 1, tests: 0 });
+  assert.deepEqual(settings.apiKeys[0].usageByDate['2026-09-12'], { total: 2, fixtures: 1, tests: 1 });
+  assert.equal(settings.apiKeys[0].lastRequestAt, '2026-09-11T16:02:00.000Z');
+});
+
+test('persists request usage for an environment key without saving its secret', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'match-pulse-env-usage-'));
+  const file = path.join(directory, 'settings.json');
+  try {
+    let settings = readApiKeySettings(file, 'environment-secret');
+    settings = recordApiKeyRequest(settings, settings.activeApiKeyId, { at: new Date('2026-09-12T01:00:00Z'), kind: 'fixtures' });
+    saveApiKeySettings(file, settings);
+    assert.ok(!fs.readFileSync(file, 'utf8').includes('environment-secret'));
+    const reloaded = readApiKeySettings(file, 'environment-secret');
+    assert.equal(reloaded.apiKeys[0].usageByDate['2026-09-12'].total, 1);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
 
 test('normalizes and masks an API key without exposing it', () => {
   assert.equal(normalizeApiKey('  abcdef123456  '), 'abcdef123456');

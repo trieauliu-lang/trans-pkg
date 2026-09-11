@@ -94,6 +94,11 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
   font-family: var(--font-display);
   font-size: 17px;
   font-weight: 700;
+  border-top: 0;
+  border-bottom: 0;
+  border-left: 0;
+  background: transparent;
+  cursor: pointer;
 }
 .brand__mark {
   width: 32px;
@@ -105,9 +110,10 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
   color: var(--white);
 }
 .topbar__nav { display: flex; align-items: center; gap: 26px; padding-left: 28px; }
-.topbar__nav a { color: var(--muted-bright); text-decoration: none; font-size: 13px; }
-.topbar__nav a:hover { color: var(--blue); }
+.topbar__nav button { height: 34px; padding: 0 10px; border: 0; border-radius: 7px; background: transparent; color: var(--muted-bright); cursor: pointer; font-size: 13px; }
+.topbar__nav button:hover, .topbar__nav button.is-active { color: var(--blue); background: var(--blue-soft); }
 .topbar__actions { display: flex; align-items: center; gap: 8px; padding-right: 18px; }
+.workspace--full { grid-column: 1 / -1; max-width: 1500px; width: 100%; justify-self: center; }
 
 .api-state, .sound-control {
   height: 34px;
@@ -331,6 +337,13 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
 .monitor-beam__copy span { color: var(--muted); font-size: 9px; }
 .monitor-beam__copy strong { font-size: 11px; }
 .monitor-beam__rule { color: var(--muted-bright); font-size: 10px; }
+.task-rule-list { display: flex; flex-direction: column; gap: 6px; margin-top: 9px; }
+.task-rule-item { display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 9px 11px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-high); }
+.task-rule-item > span { width: 22px; height: 22px; display: grid; place-items: center; border-radius: 6px; background: var(--blue-soft); color: var(--blue); font-size: 9px; font-weight: 700; }
+.task-rule-item p { margin: 0; color: var(--muted-bright); font-size: 10px; line-height: 1.5; }
+.task-rule-item em { color: var(--blue); font-size: 9px; font-style: normal; white-space: nowrap; }
+.task-rule-item--fired { border-color: var(--green-line); background: var(--green-soft); }
+.task-rule-item--fired > span, .task-rule-item--fired em { color: var(--green); }
 .task-fixtures { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 13px; }
 .error-banner { display: flex; gap: 10px; margin-top: 13px; padding: 12px; border: 1px solid var(--red-line); border-radius: 8px; color: var(--red); background: var(--red-soft); }
 .error-banner div { display: flex; flex-direction: column; gap: 3px; }
@@ -367,8 +380,16 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
 .quick-values button.is-active { border-color: var(--blue-quick); color: var(--blue); background: var(--blue-soft); }
 .field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 11px; }
 .condition-fields { display: grid; grid-template-columns: 1.5fr .7fr; gap: 6px; }
+.rule-list { display: flex; flex-direction: column; gap: 10px; }
+.rule-card { padding: 12px; border: 1px solid var(--line); border-radius: 9px; background: var(--panel-high); }
+.rule-card__header { display: flex; align-items: center; justify-content: space-between; }
+.rule-card__header strong { font-size: 11px; }
+.rule-card__header button { display: inline-flex; align-items: center; gap: 4px; padding: 4px 6px; border: 0; background: transparent; color: var(--red); cursor: pointer; font-size: 9px; }
 .rule-summary { display: flex; align-items: flex-start; gap: 9px; margin-top: 13px; padding: 11px; border: 1px solid var(--blue-line); border-radius: 8px; background: var(--blue-soft); color: var(--blue); }
 .rule-summary p { margin: 0; color: var(--muted-bright); font-size: 10px; line-height: 1.65; }
+.add-rule-button { width: 100%; height: 36px; display: flex; align-items: center; justify-content: center; gap: 6px; margin-top: 10px; border: 1px dashed var(--blue-line-strong); border-radius: 8px; background: var(--blue-soft); color: var(--blue); cursor: pointer; font-size: 10px; }
+.add-rule-button:disabled { cursor: not-allowed; opacity: .55; }
+.rule-list-note { margin: 8px 0 0; color: var(--muted); font-size: 9px; line-height: 1.6; }
 .task-drawer__actions { position: sticky; bottom: 0; display: grid; grid-template-columns: .7fr 1.3fr; gap: 8px; padding: 16px 0 0; background: var(--panel); }
 
 .alert-overlay { position: fixed; inset: 0; z-index: 80; display: grid; place-items: center; padding: 20px; background: var(--overlay); }
@@ -391,6 +412,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
 .api-key-item__select > span { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .api-key-item strong { overflow: hidden; font-size: 11px; white-space: nowrap; text-overflow: ellipsis; }
 .api-key-item small { color: var(--muted); font-size: 9px; }
+.api-key-item .api-key-item__usage { color: var(--blue); font-weight: 600; }
 .api-key-item em { display: inline-flex; align-items: center; gap: 4px; color: var(--blue); font-size: 10px; font-style: normal; white-space: nowrap; }
 .api-key-item--active em { color: var(--green); }
 .api-key-item--error em { color: var(--red); }
@@ -445,10 +467,13 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
 }
 
 @media (max-width: 590px) {
-  .topbar__nav { display: none; }
-  .topbar { grid-template-columns: 1fr auto; }
+  .topbar { grid-template-columns: 42px minmax(116px, 1fr) auto; }
+  .brand { padding: 0 5px; }
+  .brand > span:last-child { display: none; }
+  .topbar__nav { gap: 1px; }
+  .topbar__nav button { padding: 0 6px; font-size: 10px; }
   .topbar__actions .button { width: 36px; padding: 0; font-size: 0; }
-  .sound-control { padding: 0 9px; font-size: 10px; }
+  .sound-control { width: 36px; justify-content: center; padding: 0; font-size: 0; }
   .page-header h1 { font-size: 29px; }
   .summary-list { overflow-x: auto; }
   .summary-list div { min-width: 112px; }

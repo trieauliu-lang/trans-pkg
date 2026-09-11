@@ -16,6 +16,7 @@ test('normalizes TheStatsAPI fixture variants to the shared format', () => {
 
 test('TheStatsAPI uses bearer auth, date filters and pagination', async () => {
   const calls = [];
+  let tracked = 0;
   const client = createProviderClient({ providerId: 'the-stats-api', apiKey: 'stats-key', dispatcher: {}, fetchImpl: async (url, options) => {
     calls.push({ url, options });
     const page = Number(url.searchParams.get('page'));
@@ -23,13 +24,14 @@ test('TheStatsAPI uses bearer auth, date filters and pagination', async () => {
       data: [{ id: `mt_${page}`, utc_date: '2026-09-11T15:00:00Z', status: 'scheduled', home: { name: 'A' }, away: { name: 'B' } }],
       meta: { total_pages: 2 },
     });
-  } });
+  }, onRequest: () => { tracked += 1; } });
   const result = await client.fetchFixtures('2026-09-11');
   assert.equal(result.data.length, 2);
   assert.equal(calls[0].options.headers.Authorization, 'Bearer stats-key');
   assert.equal(calls[0].url.searchParams.get('date_from'), '2026-09-11');
   assert.equal(calls[0].url.searchParams.get('date_to'), '2026-09-11');
   assert.equal(calls[0].url.searchParams.get('per_page'), '100');
+  assert.equal(tracked, 2);
 });
 
 test('TheStatsAPI authentication failures are classified', async () => {

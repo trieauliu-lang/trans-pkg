@@ -36,6 +36,33 @@ function keyRecord(apiKey, label, provider = 'api-football', source = 'saved', e
     source,
     provider: providerId,
     createdAt: existing.createdAt || new Date().toISOString(),
+    usageByDate: existing.usageByDate && typeof existing.usageByDate === 'object' ? existing.usageByDate : {},
+  };
+}
+
+export function usageDate(value = new Date()) {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(value);
+}
+
+export function recordApiKeyRequest(settings, id, { at = new Date(), kind = 'request' } = {}) {
+  if (!getApiKey(settings, id)) return settings;
+  const date = usageDate(at);
+  return {
+    ...settings,
+    apiKeys: settings.apiKeys.map((item) => {
+      if (item.id !== id) return item;
+      const usageByDate = { ...(item.usageByDate || {}) };
+      const current = usageByDate[date] || { total: 0, fixtures: 0, tests: 0 };
+      usageByDate[date] = {
+        total: Number(current.total || 0) + 1,
+        fixtures: Number(current.fixtures || 0) + (kind === 'fixtures' ? 1 : 0),
+        tests: Number(current.tests || 0) + (kind === 'test' ? 1 : 0),
+      };
+      const recentDates = Object.keys(usageByDate).sort().slice(-31);
+      return { ...item, usageByDate: Object.fromEntries(recentDates.map((key) => [key, usageByDate[key]])), lastRequestAt: at.toISOString() };
+    }),
   };
 }
 
@@ -55,7 +82,11 @@ export function readApiKeySettings(file, environmentValue = '') {
 
   try {
     const environmentKey = normalizeApiKey(environmentValue);
-    if (!apiKeys.some((item) => item.provider === 'api-football' && item.key === environmentKey)) apiKeys.push(keyRecord(environmentKey, '环境变量 API', 'api-football', 'environment'));
+    if (!apiKeys.some((item) => item.provider === 'api-football' && item.key === environmentKey)) {
+      const record = keyRecord(environmentKey, '环境变量 API', 'api-football', 'environment');
+      const persistedUsage = stored.apiKeyUsage?.[record.id];
+      apiKeys.push(persistedUsage ? { ...record, usageByDate: persistedUsage.usageByDate || {}, lastRequestAt: persistedUsage.lastRequestAt || null } : record);
+    }
   } catch { /* Environment key is optional. */ }
 
   const activeApiKeyId = apiKeys.some((item) => item.id === stored.activeApiKeyId)
@@ -144,10 +175,13 @@ export function updateApiKeyTest(settings, id, { status, message, quota = null, 
 }
 
 export function publicApiKeySettings(settings) {
+  const today = usageDate();
   return {
     activeApiKeyId: settings.activeApiKeyId,
-    apiKeys: settings.apiKeys.map(({ id, label, key, source, provider, createdAt, lastUsedAt, testStatus, testMessage, testedAt, testQuota }) => ({
+    apiKeys: settings.apiKeys.map(({ id, label, key, source, provider, createdAt, lastUsedAt, lastRequestAt, usageByDate, testStatus, testMessage, testedAt, testQuota }) => ({
       id, label, hint: maskApiKey(key), source, provider: provider || 'api-football', createdAt, lastUsedAt,
+      lastRequestAt: lastRequestAt || null,
+      todayUsage: usageByDate?.[today] || { total: 0, fixtures: 0, tests: 0 },
       testStatus: testStatus || 'untested', testMessage: testMessage || '', testedAt: testedAt || null,
       testQuota: testQuota || null, active: id === settings.activeApiKeyId,
     })),
@@ -159,9 +193,10 @@ export function saveApiKeySettings(file, settings) {
   const temporaryFile = `${file}.tmp`;
   const apiKeys = settings.apiKeys
     .filter((item) => item.source !== 'environment')
-    .map(({ id, label, key, provider, createdAt, lastUsedAt, testStatus, testMessage, testedAt, testQuota }) => ({
-      id, label, key, provider, createdAt, lastUsedAt, testStatus, testMessage, testedAt, testQuota,
+    .map(({ id, label, key, provider, createdAt, lastUsedAt, lastRequestAt, usageByDate, testStatus, testMessage, testedAt, testQuota }) => ({
+      id, label, key, provider, createdAt, lastUsedAt, lastRequestAt, usageByDate, testStatus, testMessage, testedAt, testQuota,
     }));
-  fs.writeFileSync(temporaryFile, JSON.stringify({ apiKeys, activeApiKeyId: settings.activeApiKeyId }, null, 2), { mode: 0o600 });
+  const apiKeyUsage = Object.fromEntries(settings.apiKeys.map(({ id, usageByDate, lastRequestAt }) => [id, { usageByDate: usageByDate || {}, lastRequestAt: lastRequestAt || null }]));
+  fs.writeFileSync(temporaryFile, JSON.stringify({ apiKeys, apiKeyUsage, activeApiKeyId: settings.activeApiKeyId }, null, 2), { mode: 0o600 });
   fs.renameSync(temporaryFile, file);
 }

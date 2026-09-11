@@ -61,3 +61,90 @@ export function evaluateTask(task, fixtures) {
     fixtureId: hit.item.fixture.id,
   };
 }
+
+const BEFORE_PLAY_STATUSES = new Set(['NS', 'TBD', 'PST', 'CANC', 'ABD', 'SUSP']);
+
+function taskRules(task) {
+  if (Array.isArray(task.rules) && task.rules.length) return task.rules;
+  return [{
+    id: 'legacy', fixtureId: 'all', evaluateWhen: task.evaluateWhen || 'all_finished',
+    matchScope: task.matchScope || 'any', metric: task.metric || 'total_goals',
+    operator: task.operator || 'gt', threshold: Number(task.threshold) || 0,
+  }];
+}
+
+function ruleCandidates(rule, fixtures) {
+  const targets = rule.fixtureId && rule.fixtureId !== 'all'
+    ? fixtures.filter((fixture) => String(fixture.fixture.id) === String(rule.fixtureId))
+    : fixtures;
+  if (rule.evaluateWhen === 'all_finished') {
+    return fixtures.every((fixture) => FINISHED_STATUSES.has(fixture.fixture.status.short)) ? targets : [];
+  }
+  if (rule.evaluateWhen === 'each_finished') {
+    return targets.filter((fixture) => FINISHED_STATUSES.has(fixture.fixture.status.short));
+  }
+  if (rule.evaluateWhen === 'halftime') {
+    return targets.filter((fixture) => HALFTIME_REACHED_STATUSES.has(fixture.fixture.status.short));
+  }
+  return targets.filter((fixture) => !BEFORE_PLAY_STATUSES.has(fixture.fixture.status.short));
+}
+
+function checkRule(rule, item) {
+  const hasScore = item.goals.home != null && item.goals.away != null;
+  const home = Number(item.goals.home ?? 0);
+  const away = Number(item.goals.away ?? 0);
+  if (!hasScore || !Number.isFinite(home) || !Number.isFinite(away)) return { pass: false, actual: null };
+  if (rule.metric === 'home_leading') return { pass: home > away, actual: home - away };
+  if (rule.metric === 'home_trailing') return { pass: home < away, actual: home - away };
+  const actual = rule.metric === 'goal_difference' ? Math.abs(home - away) : home + away;
+  return { pass: compare(actual, rule.operator, Number(rule.threshold)), actual };
+}
+
+function matchMessage(rule, item, actual) {
+  const homeName = item.teams.home.name;
+  const awayName = item.teams.away.name;
+  const score = `${item.goals.home ?? '-'}–${item.goals.away ?? '-'}`;
+  if (rule.metric === 'home_leading') return `${homeName} ${score} ${awayName}，主队领先客队`;
+  if (rule.metric === 'home_trailing') return `${homeName} ${score} ${awayName}，主队落后客队`;
+  return `${homeName} ${score} ${awayName}，检测值 ${actual}`;
+}
+
+export function evaluateTaskRules(task, fixtures, triggeredRuleKeys = []) {
+  if (!fixtures.length) return { matches: [], reason: '暂无比赛数据' };
+  const triggered = new Set(triggeredRuleKeys);
+  const matches = [];
+  let eligibleCount = 0;
+
+  taskRules(task).forEach((rule, index) => {
+    const normalizedRule = { ...rule, id: String(rule.id || `rule-${index + 1}`) };
+    const targets = normalizedRule.fixtureId && normalizedRule.fixtureId !== 'all'
+      ? fixtures.filter((fixture) => String(fixture.fixture.id) === String(normalizedRule.fixtureId))
+      : fixtures;
+    const candidates = ruleCandidates(normalizedRule, fixtures);
+    eligibleCount += candidates.length;
+    const checks = candidates.map((item) => ({ item, ...checkRule(normalizedRule, item) }));
+
+    if (normalizedRule.matchScope === 'all') {
+      const key = `${normalizedRule.id}:all`;
+      if (!triggered.has(key) && checks.length === targets.length && checks.length > 0 && checks.every((check) => check.pass)) {
+        const hit = checks[0];
+        matches.push({ key, ruleId: normalizedRule.id, fixtureId: hit.item.fixture.id, message: matchMessage(normalizedRule, hit.item, hit.actual) });
+      }
+      return;
+    }
+
+    checks.filter((check) => check.pass).forEach((hit) => {
+      const key = `${normalizedRule.id}:${hit.item.fixture.id}`;
+      if (!triggered.has(key)) {
+        matches.push({ key, ruleId: normalizedRule.id, fixtureId: hit.item.fixture.id, message: matchMessage(normalizedRule, hit.item, hit.actual) });
+      }
+    });
+  });
+
+  return {
+    matches,
+    reason: matches.length
+      ? `${matches.length} 个新条件已满足：${matches.map((match) => match.message).join('；')}`
+      : eligibleCount ? '持续监控中，暂无新的指标满足' : '等待比赛进入规则判断阶段',
+  };
+}

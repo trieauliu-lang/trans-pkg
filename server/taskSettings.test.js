@@ -25,6 +25,7 @@ test('normalizes editable task settings without changing fixture identity', () =
   assert.equal(settings.fixtures[0].fixture.id, 1549016);
   assert.equal(settings.intervalMinutes, 5);
   assert.equal(settings.threshold, 3);
+  assert.equal(settings.rules[0].metric, 'goal_difference');
 });
 
 test('reuses the same validation for task creation and repeated edits', () => {
@@ -43,4 +44,30 @@ test('home trailing rule does not require a numeric threshold', () => {
   assert.equal(settings.evaluateWhen, 'halftime');
   assert.equal(settings.metric, 'home_trailing');
   assert.equal(settings.threshold, 0);
+});
+
+test('validates and normalizes multiple per-fixture monitoring rules', () => {
+  const input = {
+    name: '多指标提醒', fixtures: [fixture], intervalMinutes: 3,
+    rules: [
+      { id: 'half-lead', fixtureId: '1549016', evaluateWhen: 'halftime', metric: 'home_leading' },
+      { id: 'goals', fixtureId: 'all', evaluateWhen: 'in_play', metric: 'total_goals', operator: 'gt', threshold: '2' },
+    ],
+  };
+  assert.equal(validateTask(input), null);
+  const settings = normalizeTaskSettings(input);
+  assert.equal(settings.rules.length, 2);
+  assert.deepEqual(settings.rules[0], {
+    id: 'half-lead', fixtureId: '1549016', evaluateWhen: 'halftime',
+    metric: 'home_leading', operator: 'gt', threshold: 0,
+  });
+  assert.equal(settings.rules[1].threshold, 2);
+});
+
+test('rejects empty, duplicate and invalid rule targets', () => {
+  const base = { name: '提醒', fixtures: [fixture], intervalMinutes: 3 };
+  assert.match(validateTask({ ...base, rules: [] }), /至少添加/);
+  const duplicate = { id: 'same', fixtureId: 'all', evaluateWhen: 'in_play', metric: 'home_leading' };
+  assert.match(validateTask({ ...base, rules: [duplicate, duplicate] }), /重复/);
+  assert.match(validateTask({ ...base, rules: [{ ...duplicate, id: 'other', fixtureId: 'missing' }] }), /比赛不存在/);
 });

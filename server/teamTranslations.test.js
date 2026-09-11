@@ -7,6 +7,7 @@ test('uses standard Chinese club names for known teams', () => {
   assert.equal(translateKnownTeamName('Hapoel Kfar Saba'), '哈普尔卡法萨巴');
   assert.equal(translateKnownTeamName('  FC Copenhagen  '), '哥本哈根');
   assert.equal(translateKnownTeamName('Beşiktaş U21'), '贝西克塔斯U21');
+  assert.equal(translateKnownTeamName('Atletico-Mineiro'), '米内罗竞技');
 });
 
 test('keeps names that are already Chinese', () => {

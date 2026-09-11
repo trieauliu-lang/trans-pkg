@@ -5,15 +5,17 @@ import { createFootballClient, networkError, retryDelay } from './footballClient
 const client = (fetchImpl) => createFootballClient({ apiKey: 'test-key', fetchImpl, dispatcher: {} });
 
 test('sends date, key and abort signal; preserves fixtures and quota', async () => {
-  const request = client(async (url, options) => {
+  let tracked = 0;
+  const request = createFootballClient({ apiKey: 'test-key', dispatcher: {}, onRequest: () => { tracked += 1; }, fetchImpl: async (url, options) => {
     assert.equal(url.searchParams.get('date'), '2026-09-11');
     assert.equal(options.headers['x-apisports-key'], 'test-key');
     assert.ok(options.signal instanceof AbortSignal);
     return Response.json({ response: [{ fixture: { id: 1 } }], errors: [] }, { headers: { 'x-ratelimit-requests-remaining': '42' } });
-  });
+  } });
   const result = await request('fixtures', { date: '2026-09-11' });
   assert.equal(result.data[0].fixture.id, 1);
   assert.equal(result.quota.remaining, '42');
+  assert.equal(tracked, 1);
 });
 
 for (const [status, code] of [[401, 'AUTH'], [403, 'AUTH'], [429, 'RATE_LIMIT'], [502, 'UPSTREAM']]) {

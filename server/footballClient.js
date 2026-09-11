@@ -30,7 +30,7 @@ export function retryDelay(intervalMinutes, failures, retryAfterMs = 0) {
     retryAfterMs);
 }
 
-export function createFootballClient({ apiKey, timeoutMs = 15_000, fetchImpl = fetch, dispatcher } = {}) {
+export function createFootballClient({ apiKey, timeoutMs = 15_000, fetchImpl = fetch, dispatcher, onRequest = () => {} } = {}) {
   // One agent per client; respects HTTPS_PROXY, HTTP_PROXY and NO_PROXY.
   const agent = dispatcher ?? new EnvHttpProxyAgent();
   return async function footballRequest(endpoint, params = {}) {
@@ -40,6 +40,7 @@ export function createFootballClient({ apiKey, timeoutMs = 15_000, fetchImpl = f
     const url = new URL(`https://v3.football.api-sports.io/${endpoint}`);
     Object.entries(params).forEach(([key, value]) => value !== undefined && value !== '' && url.searchParams.set(key, value));
     try {
+      onRequest();
       const response = await fetchImpl(url, {
         headers: { 'x-apisports-key': apiKey }, dispatcher: agent,
         signal: AbortSignal.timeout(timeoutMs),
