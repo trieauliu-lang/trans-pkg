@@ -156,8 +156,6 @@ function healthPayload() {
 function applyActiveApiKey() {
   apiKey = getActiveApiKey(apiKeySettings);
   const activeProfile = getApiKey(apiKeySettings, apiKeySettings.activeApiKeyId);
-  fixtureCache = buildFixtureCache({});
-  saveFixtureCache({});
   tasks.forEach((task) => {
     if (activeProfile && task.providerId === activeProfile.provider) task.apiKeyId = activeProfile.id;
     if (task.status !== 'error') return;
@@ -332,6 +330,30 @@ app.post('/api/settings/api-keys/:id/test', async (request, response) => {
     saveApiKeySettings(settingsFile, apiKeySettings);
     response.json({ ...apiKeyPayload(), test: { ok: false, message: error.message, code: error.code || 'UNKNOWN' } });
   }
+});
+
+app.get('/api/fixtures/cached', (request, response) => {
+  if (!apiKey) return response.json({ cached: false, fixtures: [], mode: 'demo', quota: null });
+  const date = String(request.query.date || '');
+  const timezone = String(request.query.timezone || 'Asia/Shanghai');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return response.status(400).json({ error: '日期格式不正确' });
+  const profile = getApiKey(apiKeySettings, apiKeySettings.activeApiKeyId);
+  const result = fixtureCache.peek(fixtureCacheKey(profile, date, timezone));
+  if (!result) return response.json({ cached: false, fixtures: [], mode: 'live', quota: null, provider: profile.provider });
+  response.json({
+    cached: true,
+    fixtures: result.data,
+    mode: 'live',
+    quota: result.quota,
+    provider: profile.provider,
+    cache: {
+      source: 'cache',
+      fetchedAt: result.fetchedAt,
+      expiresAt: new Date(Date.parse(result.fetchedAt) + result.ttlMs).toISOString(),
+      stale: result.stale,
+      restored: true,
+    },
+  });
 });
 
 app.get('/api/fixtures', async (request, response) => {

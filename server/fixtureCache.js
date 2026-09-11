@@ -25,6 +25,13 @@ export function createFixtureCache({ loader, initial = {}, persist = () => {}, n
   const inflight = new Map();
 
   const snapshot = () => Object.fromEntries(entries);
+  function peek(key) {
+    const cached = entries.get(key);
+    if (!cached) return null;
+    const ageMs = Math.max(0, now() - Date.parse(cached.fetchedAt));
+    const ttlMs = fixtureCacheTtl(cached.data, now(), liveTtlMs);
+    return { ...cached, source: 'cache', ageMs, ttlMs, stale: ageMs >= ttlMs };
+  }
   async function get(key, { allowStale = false, protectQuota = false, quotaReserve = 10 } = {}) {
     const cached = entries.get(key);
     const ageMs = cached ? Math.max(0, now() - Date.parse(cached.fetchedAt)) : Infinity;
@@ -52,5 +59,5 @@ export function createFixtureCache({ loader, initial = {}, persist = () => {}, n
       throw error;
     }
   }
-  return { get, snapshot };
+  return { get, peek, snapshot };
 }

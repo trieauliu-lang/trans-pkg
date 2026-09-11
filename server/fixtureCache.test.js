@@ -65,3 +65,17 @@ test('stale browser fallback is returned after an upstream failure', async () =>
   assert.equal(result.stale, true);
   await assert.rejects(cache.get('today'), /offline/);
 });
+
+test('peek restores stale or fresh cache without calling the upstream loader', () => {
+  let calls = 0;
+  const clock = Date.parse('2026-09-11T20:00:00.000Z');
+  const initial = {
+    fresh: { data: [fixture('1H')], fetchedAt: new Date(clock - 60_000).toISOString() },
+    stale: { data: [fixture('1H')], fetchedAt: new Date(clock - 10 * 60_000).toISOString() },
+  };
+  const cache = createFixtureCache({ initial, now: () => clock, loader: async () => { calls += 1; return { data: [] }; } });
+  assert.equal(cache.peek('fresh').stale, false);
+  assert.equal(cache.peek('stale').stale, true);
+  assert.equal(cache.peek('missing'), null);
+  assert.equal(calls, 0);
+});

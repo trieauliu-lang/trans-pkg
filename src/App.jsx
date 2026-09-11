@@ -42,12 +42,74 @@ const METRIC_LABELS = { total_goals: '总进球数', goal_difference: '比分差
 const FINISHED = new Set(['FT', 'AET', 'PEN']);
 const DEFAULT_AUDIO_URL = '/default-alert.mp3';
 const DEFAULT_AUDIO_NAME = '刘欢 - 好汉歌';
+const FIXTURE_SNAPSHOT_KEY = 'matchPulse:fixtureSnapshot:v2';
 const REGION_COUNTRIES = {
   europe: new Set(['England', 'France', 'Germany', 'Italy', 'Spain', 'Portugal', 'Netherlands', 'Belgium', 'Scotland', 'Austria', 'Switzerland', 'Türkiye', 'Turkey', 'Greece', 'Denmark', 'Norway', 'Sweden', 'Poland', 'Czech-Republic', 'Croatia', 'Serbia', 'Romania', 'Ukraine', 'Armenia', 'Azerbaijan', 'Georgia', 'Kazakhstan']),
   west_asia: new Set(['Saudi-Arabia', 'Qatar', 'United-Arab-Emirates', 'Bahrain', 'Kuwait', 'Oman', 'Jordan', 'Iraq', 'Iran', 'Israel']),
   asia: new Set(['China', 'Japan', 'South-Korea', 'Thailand', 'Vietnam', 'Indonesia', 'Malaysia', 'Singapore', 'Australia', 'India', 'Uzbekistan']),
   south_america: new Set(['Brazil', 'Argentina', 'Chile', 'Uruguay', 'Colombia', 'Ecuador', 'Peru', 'Paraguay', 'Bolivia', 'Venezuela']),
 };
+
+function compactFixture(fixture) {
+  return {
+    provider: fixture.provider,
+    fixture: {
+      id: fixture.fixture?.id,
+      date: fixture.fixture?.date,
+      status: fixture.fixture?.status,
+    },
+    league: {
+      id: fixture.league?.id,
+      name: fixture.league?.name,
+      country: fixture.league?.country,
+      logo: fixture.league?.logo,
+    },
+    teams: {
+      home: fixture.teams?.home,
+      away: fixture.teams?.away,
+    },
+    goals: fixture.goals,
+  };
+}
+
+function readFixtureSnapshot() {
+  try {
+    const snapshot = JSON.parse(localStorage.getItem(FIXTURE_SNAPSHOT_KEY) || 'null');
+    if (snapshot && /^\d{4}-\d{2}-\d{2}$/.test(snapshot.date) && Array.isArray(snapshot.fixtures)) return snapshot;
+  } catch { /* Fall through to the legacy cache. */ }
+  try {
+    const fixtures = JSON.parse(localStorage.getItem('matchPulse:fixtures') || '[]');
+    if (!Array.isArray(fixtures) || !fixtures.length) return null;
+    const meta = JSON.parse(localStorage.getItem('matchPulse:fixtureMeta') || '{"cache":null,"quota":null}');
+    const date = localStorage.getItem('matchPulse:fixtureDate') || fixtures[0]?.fixture?.date?.slice(0, 10) || localDateValue();
+    return { date, fixtures, meta, queried: localStorage.getItem('matchPulse:hasQueried') === '1' };
+  } catch {
+    return null;
+  }
+}
+
+function writeFixtureSnapshot(date, fixtures, meta) {
+  try { localStorage.setItem('matchPulse:fixtureDate', date); } catch { /* The date is an optional convenience. */ }
+  try {
+    localStorage.setItem(FIXTURE_SNAPSHOT_KEY, JSON.stringify({
+      date,
+      fixtures: fixtures.map(compactFixture),
+      meta,
+      queried: true,
+      savedAt: new Date().toISOString(),
+    }));
+  } catch { /* Server cache remains available when browser storage is full or blocked. */ }
+}
+
+function clearFixtureSnapshot() {
+  try {
+    localStorage.removeItem(FIXTURE_SNAPSHOT_KEY);
+    localStorage.removeItem('matchPulse:fixtures');
+    localStorage.removeItem('matchPulse:fixtureMeta');
+    localStorage.removeItem('matchPulse:fixtureDate');
+    localStorage.setItem('matchPulse:hasQueried', '0');
+  } catch { /* Storage may be disabled. */ }
+}
 
 function fixtureRegion(fixture) {
   const country = fixture.league.country || fixture.league.name.split(' · ')[0];
@@ -320,30 +382,15 @@ function TaskDetail({ task, translations, onAction }) {
 }
 
 export default function App() {
+  const [initialFixtureSnapshot] = useState(readFixtureSnapshot);
   const [health, setHealth] = useState({ apiConfigured: false, mode: 'demo' });
   const [tasks, setTasks] = useState([]);
-  const [fixtures, setFixtures] = useState(() => {
-    try {
-      const saved = localStorage.getItem('matchPulse:fixtures');
-      return saved ? JSON.parse(saved) : [];
-    } catch {
-      return [];
-    }
-  });
-  const [fixtureMeta, setFixtureMeta] = useState(() => {
-    try {
-      const saved = localStorage.getItem('matchPulse:fixtureMeta');
-      return saved ? JSON.parse(saved) : { cache: null, quota: null };
-    } catch {
-      return { cache: null, quota: null };
-    }
-  });
-  const [hasQueriedFixtures, setHasQueriedFixtures] = useState(() => {
-    return localStorage.getItem('matchPulse:hasQueried') === '1';
-  });
+  const [fixtures, setFixtures] = useState(initialFixtureSnapshot?.fixtures || []);
+  const [fixtureMeta, setFixtureMeta] = useState(initialFixtureSnapshot?.meta || { cache: null, quota: null });
+  const [hasQueriedFixtures, setHasQueriedFixtures] = useState(Boolean(initialFixtureSnapshot?.queried));
   const [activeTaskId, setActiveTaskId] = useState(null);
   const [selectedIds, setSelectedIds] = useState([]);
-  const [date, setDate] = useState(localDateValue());
+  const [date, setDate] = useState(initialFixtureSnapshot?.date || localDateValue());
   const [regionFilter, setRegionFilter] = useState('all');
   const [fixtureSearch, setFixtureSearch] = useState('');
   const [visibleCount, setVisibleCount] = useState(24);
@@ -371,6 +418,7 @@ export default function App() {
   const audioContextRef = useRef(null);
   const customAudioUrlRef = useRef('');
   const translationRequestsRef = useRef(new Set());
+  const fixtureRestoreRequestRef = useRef(0);
 
   const activeTask = useMemo(() => tasks.find((task) => task.id === activeTaskId) || tasks[0] || null, [tasks, activeTaskId]);
   const runningCount = tasks.filter((task) => ['running', 'scheduled'].includes(task.status)).length;
@@ -396,18 +444,47 @@ export default function App() {
     window.setTimeout(() => setToast(''), 3200);
   }
 
+  async function restoreCachedFixtures(value, { keepExisting = false } = {}) {
+    const requestId = ++fixtureRestoreRequestRef.current;
+    try {
+      const response = await fetch(`/api/fixtures/cached?date=${value}&timezone=Asia/Shanghai`);
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || '缓存读取失败');
+      if (requestId !== fixtureRestoreRequestRef.current) return;
+      if (!body.cached) {
+        if (!keepExisting) {
+          setFixtures([]);
+          setFixtureMeta({ cache: null, quota: null });
+          setHasQueriedFixtures(false);
+        }
+        return;
+      }
+      const meta = { cache: body.cache || null, quota: body.quota || null };
+      setFixtures(body.fixtures || []);
+      setFixtureMeta(meta);
+      setHasQueriedFixtures(true);
+      writeFixtureSnapshot(value, body.fixtures || [], meta);
+    } catch {
+      if (!keepExisting && requestId === fixtureRestoreRequestRef.current) {
+        setFixtures([]);
+        setFixtureMeta({ cache: null, quota: null });
+        setHasQueriedFixtures(false);
+      }
+    }
+  }
+
   async function loadFixtures() {
+    ++fixtureRestoreRequestRef.current;
     setLoadingFixtures(true);
     try {
       const response = await fetch(`/api/fixtures?date=${date}&timezone=Asia/Shanghai`);
       const body = await response.json();
       if (!response.ok) throw new Error(body.error || '赛程加载失败');
       setFixtures(body.fixtures);
-      setFixtureMeta({ cache: body.cache || null, quota: body.quota || null });
+      const meta = { cache: body.cache || null, quota: body.quota || null };
+      setFixtureMeta(meta);
       setHasQueriedFixtures(true);
-      localStorage.setItem('matchPulse:fixtures', JSON.stringify(body.fixtures));
-      localStorage.setItem('matchPulse:fixtureMeta', JSON.stringify({ cache: body.cache || null, quota: body.quota || null }));
-      localStorage.setItem('matchPulse:hasQueried', '1');
+      writeFixtureSnapshot(date, body.fixtures, meta);
       if (body.cache?.quotaProtected) showToast('每日额度已进入保留区，赛事列表暂用缓存；监控任务仍可查询');
       else if (body.cache?.stale) showToast('比分服务暂时不可用，当前显示最近一次缓存');
     } catch (error) {
@@ -423,9 +500,7 @@ export default function App() {
     setSelectedIds([]);
     setFixtureMeta({ cache: null, quota: null });
     setHasQueriedFixtures(false);
-    localStorage.removeItem('matchPulse:fixtures');
-    localStorage.removeItem('matchPulse:fixtureMeta');
-    localStorage.setItem('matchPulse:hasQueried', '0');
+    restoreCachedFixtures(value);
   }
 
   function acceptApiKeyState(body) {
@@ -435,9 +510,8 @@ export default function App() {
     setSelectedIds([]);
     setFixtureMeta({ cache: null, quota: null });
     setHasQueriedFixtures(false);
-    localStorage.removeItem('matchPulse:fixtures');
-    localStorage.removeItem('matchPulse:fixtureMeta');
-    localStorage.setItem('matchPulse:hasQueried', '0');
+    ++fixtureRestoreRequestRef.current;
+    clearFixtureSnapshot();
   }
 
   async function openApiKeySettings() {
@@ -634,6 +708,10 @@ export default function App() {
         setTeamTranslations(translationsBody.translations || {});
       })
       .catch(() => showToast('无法连接监控服务'));
+  }, []);
+
+  useEffect(() => {
+    restoreCachedFixtures(date, { keepExisting: Boolean(initialFixtureSnapshot?.fixtures?.length) });
   }, []);
 
   useEffect(() => {
