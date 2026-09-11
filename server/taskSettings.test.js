@@ -32,3 +32,15 @@ test('reuses the same validation for task creation and repeated edits', () => {
   assert.equal(validateTask({ name: '提醒', fixtures: [fixture], intervalMinutes: 0, threshold: 2 }), '监控频次不能小于 1 分钟');
   assert.equal(validateTask({ name: '提醒', fixtures: [fixture], intervalMinutes: 3, threshold: 2 }), null);
 });
+
+test('home trailing rule does not require a numeric threshold', () => {
+  const input = {
+    name: '半场主队落后提醒', fixtures: [fixture], intervalMinutes: 3,
+    evaluateWhen: 'halftime', matchScope: 'any', metric: 'home_trailing', threshold: '',
+  };
+  assert.equal(validateTask(input), null);
+  const settings = normalizeTaskSettings(input);
+  assert.equal(settings.evaluateWhen, 'halftime');
+  assert.equal(settings.metric, 'home_trailing');
+  assert.equal(settings.threshold, 0);
+});

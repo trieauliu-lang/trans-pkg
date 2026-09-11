@@ -36,6 +36,8 @@ const STATUS_META = {
 };
 
 const OPERATOR_LABELS = { gt: '大于', gte: '大于等于', eq: '等于', lt: '小于', lte: '小于等于' };
+const EVALUATE_WHEN_LABELS = { all_finished: '全部比赛结束后', each_finished: '每场比赛结束时', halftime: '比赛进入半场后' };
+const METRIC_LABELS = { total_goals: '总进球数', goal_difference: '比分差', home_trailing: '主队落后客队' };
 const FINISHED = new Set(['FT', 'AET', 'PEN']);
 const DEFAULT_AUDIO_URL = '/default-alert.mp3';
 const DEFAULT_AUDIO_NAME = '刘欢 - 好汉歌';
@@ -194,6 +196,9 @@ function CreateTaskPanel({ fixtures, selectedIds, setSelectedIds, monitorDate, t
 
   const selectedFixtures = fixtures.filter((item) => selectedIds.includes(item.fixture.id));
   const update = (key, value) => setForm((current) => ({ ...current, [key]: value }));
+  const updateMetric = (metric) => setForm((current) => metric === 'home_trailing'
+    ? { ...current, metric, evaluateWhen: 'halftime', operator: 'lt', threshold: 0 }
+    : { ...current, metric });
   const toggleFixture = (fixture) => setSelectedIds((current) => current.includes(fixture.fixture.id)
     ? current.filter((id) => id !== fixture.fixture.id)
     : [...current, fixture.fixture.id]);
@@ -223,7 +228,9 @@ function CreateTaskPanel({ fixtures, selectedIds, setSelectedIds, monitorDate, t
     }
   }
 
-  const ruleSummary = `当${form.evaluateWhen === 'all_finished' ? '全部比赛结束后' : '每场比赛结束时'}，如果${form.matchScope === 'any' ? '任意一场' : '全部比赛'}的${form.metric === 'total_goals' ? '总进球数' : '比分差'}${OPERATOR_LABELS[form.operator]} ${form.threshold}，播放提醒。`;
+  const ruleSummary = form.metric === 'home_trailing'
+    ? `当${EVALUATE_WHEN_LABELS[form.evaluateWhen]}，如果${form.matchScope === 'any' ? '任意一场' : '全部比赛'}主队比分低于客队，播放提醒。`
+    : `当${EVALUATE_WHEN_LABELS[form.evaluateWhen]}，如果${form.matchScope === 'any' ? '任意一场' : '全部比赛'}的${METRIC_LABELS[form.metric]}${OPERATOR_LABELS[form.operator]} ${form.threshold}，播放提醒。`;
 
   return (
     <div className="drawer-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
@@ -254,12 +261,12 @@ function CreateTaskPanel({ fixtures, selectedIds, setSelectedIds, monitorDate, t
           </section>
 
           <section className="form-section">
-            <div className="form-section__title"><span>03</span><div><strong>触发规则</strong><small>首版支持总进球与比分差</small></div></div>
+            <div className="form-section__title"><span>03</span><div><strong>触发规则</strong><small>支持半场后主队落后提醒</small></div></div>
             <div className="field-grid">
-              <label className="field"><span>判断时机</span><select value={form.evaluateWhen} onChange={(event) => update('evaluateWhen', event.target.value)}><option value="all_finished">全部比赛结束后</option><option value="each_finished">每场比赛结束时</option></select></label>
+              <label className="field"><span>判断时机</span><select value={form.evaluateWhen} onChange={(event) => update('evaluateWhen', event.target.value)}><option value="halftime">比赛进入半场后</option><option value="all_finished">全部比赛结束后</option><option value="each_finished">每场比赛结束时</option></select></label>
               <label className="field"><span>比赛范围</span><select value={form.matchScope} onChange={(event) => update('matchScope', event.target.value)}><option value="any">任意一场</option><option value="all">全部比赛</option></select></label>
-              <label className="field"><span>监控指标</span><select value={form.metric} onChange={(event) => update('metric', event.target.value)}><option value="total_goals">总进球数</option><option value="goal_difference">比分差</option></select></label>
-              <label className="field"><span>比较条件</span><div className="condition-fields"><select value={form.operator} onChange={(event) => update('operator', event.target.value)}>{Object.entries(OPERATOR_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select><input type="number" min="0" value={form.threshold} onChange={(event) => update('threshold', event.target.value)} /></div></label>
+              <label className="field"><span>监控指标</span><select value={form.metric} onChange={(event) => updateMetric(event.target.value)}><option value="home_trailing">主队落后客队</option><option value="total_goals">总进球数</option><option value="goal_difference">比分差</option></select></label>
+              {form.metric !== 'home_trailing' && <label className="field"><span>比较条件</span><div className="condition-fields"><select value={form.operator} onChange={(event) => update('operator', event.target.value)}>{Object.entries(OPERATOR_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select><input type="number" min="0" value={form.threshold} onChange={(event) => update('threshold', event.target.value)} /></div></label>}
             </div>
             <div className="rule-summary"><Sparkles size={18} /><p>{ruleSummary}</p></div>
           </section>
@@ -297,7 +304,7 @@ function TaskDetail({ task, translations, onAction }) {
 
       <div className={`monitor-beam monitor-beam--${meta.tone}`}>
         <div className="monitor-beam__copy"><span>提醒规则</span><strong>{task.status === 'running' ? '正在监控' : meta.label}</strong></div>
-        <div className="monitor-beam__rule">{task.evaluateWhen === 'all_finished' ? '全部完场后' : '每场完场时'} · {task.matchScope === 'any' ? '任意一场' : '全部比赛'} · {task.metric === 'total_goals' ? '总进球' : '比分差'} {OPERATOR_LABELS[task.operator]} {task.threshold}</div>
+        <div className="monitor-beam__rule">{EVALUATE_WHEN_LABELS[task.evaluateWhen] || '全部比赛结束后'} · {task.matchScope === 'any' ? '任意一场' : '全部比赛'} · {task.metric === 'home_trailing' ? '主队落后客队' : `${METRIC_LABELS[task.metric] || '总进球数'} ${OPERATOR_LABELS[task.operator]} ${task.threshold}`}</div>
       </div>
 
       <p className={`data-freshness ${task.error ? 'data-freshness--stale' : ''}`}>
