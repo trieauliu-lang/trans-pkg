@@ -44,6 +44,18 @@ test('browser reads protect remaining quota while task reads may use the reserve
   assert.equal(calls, 1);
 });
 
+test('unknown provider quota does not freeze an expired cache entry', async () => {
+  let calls = 0;
+  const clock = Date.parse('2026-09-11T20:00:00.000Z');
+  const initial = { stats: { data: [fixture('1H')], quota: { remaining: null, limit: null }, fetchedAt: new Date(clock - 10 * 60_000).toISOString() } };
+  const cache = createFixtureCache({ initial, now: () => clock, loader: async () => {
+    calls += 1;
+    return { data: [fixture('2H')], quota: { remaining: null, limit: null } };
+  } });
+  assert.equal((await cache.get('stats', { protectQuota: true })).source, 'api');
+  assert.equal(calls, 1);
+});
+
 test('stale browser fallback is returned after an upstream failure', async () => {
   const clock = Date.parse('2026-09-11T20:00:00.000Z');
   const initial = { today: { data: [fixture('1H')], fetchedAt: new Date(clock - 10 * 60_000).toISOString() } };

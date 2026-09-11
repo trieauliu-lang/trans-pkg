@@ -4,8 +4,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import crypto from 'node:crypto';
 import { evaluateTask } from './rules.js';
-import { createFootballClient, retryDelay } from './footballClient.js';
+import { retryDelay } from './footballClient.js';
 import { createFixtureCache } from './fixtureCache.js';
+import { createProviderClient, PROVIDERS } from './providers.js';
 import {
   activateApiKey, addApiKey, getActiveApiKey, getApiKey, maskApiKey,
   publicApiKeySettings, readApiKeySettings, saveApiKeySettings, updateApiKeyTest,
@@ -76,8 +77,6 @@ function broadcast(event, payload) {
   clients.forEach((client) => client.write(message));
 }
 
-let footballRequest = createFootballClient({ apiKey });
-
 function readFixtureCache() {
   try { return JSON.parse(fs.readFileSync(fixturesCacheFile, 'utf8')); } catch { return {}; }
 }
@@ -93,16 +92,18 @@ function buildFixtureCache(initial = readFixtureCache()) {
     liveTtlMs: liveCacheSeconds * 1000,
     persist: saveFixtureCache,
     loader: async (key) => {
-      const [date, timezone] = key.split('|');
-      return footballRequest('fixtures', { date, timezone });
+      const [keyId, providerId, date, timezone] = key.split('|');
+      const profile = getApiKey(apiKeySettings, keyId);
+      if (!profile || profile.provider !== providerId) throw new Error('任务绑定的 API Key 不存在');
+      return createProviderClient({ providerId, apiKey: profile.key }).fetchFixtures(date, timezone);
     },
   });
 }
 
 let fixtureCache = buildFixtureCache();
 
-function fixtureCacheKey(date, timezone = 'Asia/Shanghai') {
-  return `${date}|${timezone}`;
+function fixtureCacheKey(profile, date, timezone = 'Asia/Shanghai') {
+  return `${profile.id}|${profile.provider}|${date}|${timezone}`;
 }
 
 function healthPayload() {
@@ -115,6 +116,9 @@ function healthPayload() {
     apiKeyCount: apiKeySettings.apiKeys.length,
     activeApiKeyStatus: activeProfile?.testStatus || 'untested',
     activeApiKeyTestedAt: activeProfile?.testedAt || null,
+    providerId: activeProfile?.provider || null,
+    providerLabel: PROVIDERS[activeProfile?.provider]?.label || null,
+    providers: Object.values(PROVIDERS),
     mode: apiKey ? 'live' : 'demo',
     liveCacheSeconds,
     quotaReserve,
@@ -123,10 +127,11 @@ function healthPayload() {
 
 function applyActiveApiKey() {
   apiKey = getActiveApiKey(apiKeySettings);
-  footballRequest = createFootballClient({ apiKey });
+  const activeProfile = getApiKey(apiKeySettings, apiKeySettings.activeApiKeyId);
   fixtureCache = buildFixtureCache({});
   saveFixtureCache({});
   tasks.forEach((task) => {
+    if (activeProfile && task.providerId === activeProfile.provider) task.apiKeyId = activeProfile.id;
     if (task.status !== 'error') return;
     task.revision = (task.revision || 0) + 1;
     task.status = 'running';
@@ -149,17 +154,21 @@ async function getTaskFixtures(task) {
       ...item,
       fixture: { ...item.fixture, status: { short: 'FT', long: 'Match Finished', elapsed: 90 } },
       goals: item.fixture.id === task.fixtures[0].fixture.id ? { home: 2, away: 1 } : { home: 1, away: 0 },
-    })), source: 'demo', fetchedAt: new Date().toISOString(), quota: null };
+    })), source: 'demo', fetchedAt: new Date().toISOString(), quota: null, providerId: null, apiKeyId: null };
   }
 
   const selectedIds = new Set(task.fixtures.map((item) => String(item.fixture.id)));
   const monitorDate = task.monitorDate || task.fixtures[0]?.fixture?.date?.slice(0, 10);
-  const result = await fixtureCache.get(fixtureCacheKey(monitorDate));
+  const profile = getApiKey(apiKeySettings, task.apiKeyId)
+    || apiKeySettings.apiKeys.find((item) => item.provider === task.providerId)
+    || getApiKey(apiKeySettings, apiKeySettings.activeApiKeyId);
+  if (!profile) throw new Error('任务所需的 API 平台尚未配置 Key');
+  const result = await fixtureCache.get(fixtureCacheKey(profile, monitorDate));
   const fixtures = result.data.filter((item) => selectedIds.has(String(item.fixture.id)));
   if (fixtures.length !== selectedIds.size) {
     throw new Error(`API 未返回全部所选比赛（${fixtures.length}/${selectedIds.size}），将在下次继续检查`);
   }
-  return { fixtures, source: result.source, fetchedAt: result.fetchedAt, quota: result.quota };
+  return { fixtures, source: result.source, fetchedAt: result.fetchedAt, quota: result.quota, providerId: profile.provider, apiKeyId: profile.id };
 }
 
 async function runTask(task) {
@@ -177,6 +186,8 @@ async function runTask(task) {
     task.lastSucceededAt = fixtureResult.fetchedAt || new Date().toISOString();
     task.lastFetchSource = fixtureResult.source;
     task.quota = fixtureResult.quota;
+    task.providerId = fixtureResult.providerId || task.providerId;
+    task.apiKeyId = fixtureResult.apiKeyId || task.apiKeyId;
     task.consecutiveFailures = 0;
     task.errorCode = null;
     task.lastMessage = result.reason;
@@ -227,7 +238,7 @@ app.get('/api/settings/api-keys', (_request, response) => response.json(apiKeyPa
 
 app.post('/api/settings/api-key', (request, response) => {
   try {
-    apiKeySettings = addApiKey(apiKeySettings, request.body?.apiKey, request.body?.label);
+    apiKeySettings = addApiKey(apiKeySettings, request.body?.apiKey, request.body?.label, request.body?.provider);
     saveApiKeySettings(settingsFile, apiKeySettings);
     applyActiveApiKey();
     response.json(apiKeyPayload());
@@ -251,7 +262,7 @@ app.post('/api/settings/api-keys/:id/test', async (request, response) => {
   const profile = getApiKey(apiKeySettings, request.params.id);
   if (!profile) return response.status(404).json({ error: 'API Key 不存在' });
   try {
-    const result = await createFootballClient({ apiKey: profile.key })('timezone');
+    const result = await createProviderClient({ providerId: profile.provider, apiKey: profile.key }).test();
     apiKeySettings = updateApiKeyTest(apiKeySettings, profile.id, {
       status: 'healthy',
       message: '连接正常',
@@ -275,7 +286,8 @@ app.get('/api/fixtures', async (request, response) => {
     const date = String(request.query.date || '');
     const timezone = String(request.query.timezone || 'Asia/Shanghai');
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return response.status(400).json({ error: '日期格式不正确' });
-    const result = await fixtureCache.get(fixtureCacheKey(date, timezone), {
+    const profile = getApiKey(apiKeySettings, apiKeySettings.activeApiKeyId);
+    const result = await fixtureCache.get(fixtureCacheKey(profile, date, timezone), {
       allowStale: true,
       protectQuota: true,
       quotaReserve,
@@ -284,6 +296,7 @@ app.get('/api/fixtures', async (request, response) => {
       fixtures: result.data,
       mode: 'live',
       quota: result.quota,
+      provider: profile.provider,
       cache: {
         source: result.source,
         fetchedAt: result.fetchedAt,
@@ -317,9 +330,12 @@ app.post('/api/tasks', (request, response) => {
   const error = validateTask(request.body);
   if (error) return response.status(400).json({ error });
   const settings = normalizeTaskSettings(request.body);
+  const activeProfile = getApiKey(apiKeySettings, apiKeySettings.activeApiKeyId);
   const task = {
     id: crypto.randomUUID(),
     ...settings,
+    providerId: activeProfile?.provider || null,
+    apiKeyId: activeProfile?.id || null,
     status: Date.parse(settings.startAt) > Date.now() ? 'scheduled' : 'running',
     nextCheckAt: settings.startAt,
     createdAt: new Date().toISOString(),

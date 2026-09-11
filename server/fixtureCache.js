@@ -23,7 +23,6 @@ export function fixtureCacheTtl(fixtures, now = Date.now(), liveTtlMs = 5 * 60_0
 export function createFixtureCache({ loader, initial = {}, persist = () => {}, now = () => Date.now(), liveTtlMs } = {}) {
   const entries = new Map(Object.entries(initial).filter(([, value]) => value?.fetchedAt && Array.isArray(value?.data)));
   const inflight = new Map();
-  let quota = Object.values(initial).map((item) => item?.quota).find(Boolean) || null;
 
   const snapshot = () => Object.fromEntries(entries);
   async function get(key, { allowStale = false, protectQuota = false, quotaReserve = 10 } = {}) {
@@ -31,8 +30,8 @@ export function createFixtureCache({ loader, initial = {}, persist = () => {}, n
     const ageMs = cached ? Math.max(0, now() - Date.parse(cached.fetchedAt)) : Infinity;
     const ttlMs = cached ? fixtureCacheTtl(cached.data, now(), liveTtlMs) : 0;
     if (cached && ageMs < ttlMs) return { ...cached, source: 'cache', ageMs, ttlMs, stale: false };
-    if (protectQuota && cached && Number(quota?.remaining) <= quotaReserve) {
-      return { ...cached, quota, source: 'cache', ageMs, ttlMs, stale: true, quotaProtected: true };
+    if (protectQuota && cached?.quota?.remaining != null && Number(cached.quota.remaining) <= quotaReserve) {
+      return { ...cached, source: 'cache', ageMs, ttlMs, stale: true, quotaProtected: true };
     }
     if (inflight.has(key)) {
       const result = await inflight.get(key);
@@ -40,8 +39,7 @@ export function createFixtureCache({ loader, initial = {}, persist = () => {}, n
     }
 
     const request = loader(key).then((result) => {
-      quota = result.quota || quota;
-      const entry = { data: result.data, quota, fetchedAt: new Date(now()).toISOString() };
+      const entry = { data: result.data, quota: result.quota || null, fetchedAt: new Date(now()).toISOString() };
       entries.set(key, entry);
       persist(snapshot());
       return { ...entry, source: 'api', ageMs: 0, ttlMs: fixtureCacheTtl(entry.data, now(), liveTtlMs), stale: false };
@@ -50,7 +48,7 @@ export function createFixtureCache({ loader, initial = {}, persist = () => {}, n
     try {
       return await request;
     } catch (error) {
-      if (allowStale && cached) return { ...cached, quota, source: 'stale', ageMs, ttlMs, stale: true, error: error.message };
+      if (allowStale && cached) return { ...cached, source: 'stale', ageMs, ttlMs, stale: true, error: error.message };
       throw error;
     }
   }

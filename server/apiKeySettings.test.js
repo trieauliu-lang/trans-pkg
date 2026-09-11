@@ -22,9 +22,13 @@ test('adds, deduplicates, names and switches cached keys', () => {
   settings = addApiKey(settings, 'second-secret-2222', '备用账号');
   const secondId = settings.activeApiKeyId;
   assert.equal(settings.apiKeys.length, 2);
+  settings = addApiKey(settings, 'second-secret-2222', 'Stats 账号', 'the-stats-api');
+  assert.equal(settings.apiKeys.length, 3);
+  assert.equal(settings.apiKeys.find((item) => item.provider === 'the-stats-api').label, 'Stats 账号');
+  settings = activateApiKey(settings, secondId);
   assert.equal(getActiveApiKey(settings), 'second-secret-2222');
   settings = addApiKey(settings, ' first-secret-1111 ', '主账号更新名称');
-  assert.equal(settings.apiKeys.length, 2);
+  assert.equal(settings.apiKeys.length, 3);
   assert.equal(settings.apiKeys.find((item) => item.id === firstId).label, '主账号更新名称');
   settings = activateApiKey(settings, secondId);
   assert.equal(getActiveApiKey(settings), 'second-secret-2222');

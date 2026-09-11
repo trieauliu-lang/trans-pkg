@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { normalizeProviderId } from './providers.js';
 
 export function normalizeApiKey(value) {
   if (typeof value !== 'string') throw new Error('请输入 API Key');
@@ -15,8 +16,8 @@ export function maskApiKey(value) {
   return `••••${value.slice(-4)}`;
 }
 
-function keyId(value) {
-  return crypto.createHash('sha256').update(value).digest('hex').slice(0, 16);
+function keyId(value, provider) {
+  return crypto.createHash('sha256').update(`${provider}:${value}`).digest('hex').slice(0, 16);
 }
 
 function normalizeLabel(value, apiKey) {
@@ -25,13 +26,15 @@ function normalizeLabel(value, apiKey) {
   return label || `API ${maskApiKey(apiKey)}`;
 }
 
-function keyRecord(apiKey, label, source = 'saved', existing = {}) {
+function keyRecord(apiKey, label, provider = 'api-football', source = 'saved', existing = {}) {
+  const providerId = normalizeProviderId(provider);
   return {
     ...existing,
-    id: keyId(apiKey),
+    id: existing.id || keyId(apiKey, providerId),
     label: normalizeLabel(label || existing.label, apiKey),
     key: apiKey,
     source,
+    provider: providerId,
     createdAt: existing.createdAt || new Date().toISOString(),
   };
 }
@@ -40,18 +43,19 @@ export function readApiKeySettings(file, environmentValue = '') {
   let stored = {};
   try { stored = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { /* First run or invalid legacy file. */ }
   const apiKeys = [];
-  const addStored = (value, label, existing = {}) => {
+  const addStored = (value, label, provider = 'api-football', existing = {}) => {
     try {
       const apiKey = normalizeApiKey(value);
-      if (!apiKeys.some((item) => item.id === keyId(apiKey))) apiKeys.push(keyRecord(apiKey, label, 'saved', existing));
+      const providerId = normalizeProviderId(provider);
+      if (!apiKeys.some((item) => item.provider === providerId && item.key === apiKey)) apiKeys.push(keyRecord(apiKey, label, providerId, 'saved', existing));
     } catch { /* Ignore invalid persisted entries. */ }
   };
-  if (Array.isArray(stored.apiKeys)) stored.apiKeys.forEach((item) => addStored(item?.key, item?.label, item));
+  if (Array.isArray(stored.apiKeys)) stored.apiKeys.forEach((item) => addStored(item?.key, item?.label, item?.provider, item));
   else if (stored.apiKey) addStored(stored.apiKey, stored.label);
 
   try {
     const environmentKey = normalizeApiKey(environmentValue);
-    if (!apiKeys.some((item) => item.id === keyId(environmentKey))) apiKeys.push(keyRecord(environmentKey, '环境变量 API', 'environment'));
+    if (!apiKeys.some((item) => item.provider === 'api-football' && item.key === environmentKey)) apiKeys.push(keyRecord(environmentKey, '环境变量 API', 'api-football', 'environment'));
   } catch { /* Environment key is optional. */ }
 
   const activeApiKeyId = apiKeys.some((item) => item.id === stored.activeApiKeyId)
@@ -60,11 +64,12 @@ export function readApiKeySettings(file, environmentValue = '') {
   return { apiKeys, activeApiKeyId };
 }
 
-export function addApiKey(settings, value, label = '') {
+export function addApiKey(settings, value, label = '', provider = 'api-football') {
   const apiKey = normalizeApiKey(value);
-  const id = keyId(apiKey);
-  const existing = settings.apiKeys.find((item) => item.id === id);
-  const record = keyRecord(apiKey, label || existing?.label, existing?.source || 'saved', existing);
+  const providerId = normalizeProviderId(provider);
+  const existing = settings.apiKeys.find((item) => item.provider === providerId && item.key === apiKey);
+  const id = existing?.id || keyId(apiKey, providerId);
+  const record = keyRecord(apiKey, label || existing?.label, providerId, existing?.source || 'saved', existing);
   const apiKeys = existing
     ? settings.apiKeys.map((item) => item.id === id ? record : item)
     : [...settings.apiKeys, record];
@@ -106,8 +111,8 @@ export function updateApiKeyTest(settings, id, { status, message, quota = null, 
 export function publicApiKeySettings(settings) {
   return {
     activeApiKeyId: settings.activeApiKeyId,
-    apiKeys: settings.apiKeys.map(({ id, label, key, source, createdAt, lastUsedAt, testStatus, testMessage, testedAt, testQuota }) => ({
-      id, label, hint: maskApiKey(key), source, createdAt, lastUsedAt,
+    apiKeys: settings.apiKeys.map(({ id, label, key, source, provider, createdAt, lastUsedAt, testStatus, testMessage, testedAt, testQuota }) => ({
+      id, label, hint: maskApiKey(key), source, provider: provider || 'api-football', createdAt, lastUsedAt,
       testStatus: testStatus || 'untested', testMessage: testMessage || '', testedAt: testedAt || null,
       testQuota: testQuota || null, active: id === settings.activeApiKeyId,
     })),
@@ -119,8 +124,8 @@ export function saveApiKeySettings(file, settings) {
   const temporaryFile = `${file}.tmp`;
   const apiKeys = settings.apiKeys
     .filter((item) => item.source !== 'environment')
-    .map(({ id, label, key, createdAt, lastUsedAt, testStatus, testMessage, testedAt, testQuota }) => ({
-      id, label, key, createdAt, lastUsedAt, testStatus, testMessage, testedAt, testQuota,
+    .map(({ id, label, key, provider, createdAt, lastUsedAt, testStatus, testMessage, testedAt, testQuota }) => ({
+      id, label, key, provider, createdAt, lastUsedAt, testStatus, testMessage, testedAt, testQuota,
     }));
   fs.writeFileSync(temporaryFile, JSON.stringify({ apiKeys, activeApiKeyId: settings.activeApiKeyId }, null, 2), { mode: 0o600 });
   fs.renameSync(temporaryFile, file);
