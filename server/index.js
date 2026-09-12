@@ -59,10 +59,17 @@ function demoFixtures(date) {
 
 function readTasks() {
   try {
-    return JSON.parse(fs.readFileSync(tasksFile, 'utf8')).map(({ checking: _checking, requestCount: _requestCount, ...task }) => ({
-      ...task,
-      intervalMinutes: normalizeMonitorInterval(task.intervalMinutes),
-    }));
+    return JSON.parse(fs.readFileSync(tasksFile, 'utf8')).map(({ checking: _checking, requestCount: _requestCount, ...task }) => {
+      const existingHistory = Array.isArray(task.triggerHistory) ? task.triggerHistory : [];
+      const previousLatestReminder = existingHistory[existingHistory.length - 1]?.triggeredAt || task.triggeredAt || null;
+      return {
+        ...task,
+        intervalMinutes: normalizeMonitorInterval(task.intervalMinutes),
+        lastAcknowledgedTriggerAt: Object.hasOwn(task, 'lastAcknowledgedTriggerAt')
+          ? task.lastAcknowledgedTriggerAt
+          : previousLatestReminder,
+      };
+    });
   } catch {
     return [];
   }
@@ -454,6 +461,7 @@ app.post('/api/tasks', (request, response) => {
     triggeredRuleKeys: [],
     triggerHistory: [],
     triggerCount: 0,
+    lastAcknowledgedTriggerAt: null,
     lastMessage: '等待首次检查',
     error: null,
   };
@@ -488,6 +496,7 @@ app.put('/api/tasks/:id', (request, response) => {
     triggeredRuleKeys: resetHistory ? [] : (task.triggeredRuleKeys || []),
     triggerHistory: resetHistory ? [] : (task.triggerHistory || []),
     triggerCount: resetHistory ? 0 : (task.triggerCount || 0),
+    lastAcknowledgedTriggerAt: resetHistory ? null : (task.lastAcknowledgedTriggerAt || null),
     lastMessage: '设置已更新，等待首次检查',
     error: null,
   });
@@ -513,6 +522,7 @@ app.post('/api/tasks/:id/run', (request, response) => {
     task.triggeredRuleKeys = [];
     task.triggerHistory = [];
     task.triggerCount = 0;
+    task.lastAcknowledgedTriggerAt = null;
     task.triggeredAt = null;
     task.triggerFixtureId = null;
   }
@@ -528,6 +538,16 @@ app.post('/api/tasks/:id/stop', (request, response) => {
   task.revision = (task.revision || 0) + 1;
   task.status = 'stopped';
   task.nextCheckAt = null;
+  saveTasks();
+  broadcast('tasks-updated', tasks);
+  response.json({ task });
+});
+
+app.post('/api/tasks/:id/acknowledge', (request, response) => {
+  const task = tasks.find((item) => item.id === request.params.id);
+  if (!task) return response.status(404).json({ error: '任务不存在' });
+  const history = Array.isArray(task.triggerHistory) ? task.triggerHistory : [];
+  task.lastAcknowledgedTriggerAt = history[history.length - 1]?.triggeredAt || task.triggeredAt || null;
   saveTasks();
   broadcast('tasks-updated', tasks);
   response.json({ task });

@@ -33,6 +33,7 @@ import {
   removeFixtureSnapshot,
   writeFixtureSnapshot,
 } from './fixtureSnapshot.js';
+import { groupedReminderHistory, latestReminderAt, unreadReminderCount } from './reminderHistory.js';
 
 const STATUS_META = {
   scheduled: { label: '等待启动', tone: 'scheduled' },
@@ -156,6 +157,12 @@ function monitorDateLabel(value) {
   return new Intl.DateTimeFormat('zh-CN', { month: 'long', day: 'numeric', weekday: 'short' }).format(new Date(`${value}T12:00:00`));
 }
 
+function reminderDateLabel(value) {
+  if (value === localDateValue()) return `今天 · ${value}`;
+  if (value === shiftedDateValue(-1)) return `昨天 · ${value}`;
+  return value === 'unknown' ? '时间未知' : value;
+}
+
 function formatDateTime(value, withDate = true) {
   if (!value) return '—';
   return new Intl.DateTimeFormat('zh-CN', {
@@ -254,16 +261,40 @@ function ApiUsageHistory({ item }) {
   );
 }
 
-function TaskListItem({ task, active, onClick }) {
+function TaskListItem({ task, active, unreadCount = 0, onClick }) {
   return (
-    <button className={`task-item ${active ? 'task-item--active' : ''}`} onClick={onClick}>
-      <span className="task-item__icon"><Radio size={16} /></span>
+    <button className={`task-item ${active ? 'task-item--active' : ''} ${unreadCount ? 'task-item--unread' : ''}`} onClick={onClick}>
+      <span className="task-item__icon">{unreadCount ? <BellRing size={16} /> : <Radio size={16} />}{unreadCount > 0 && <i>{unreadCount > 99 ? '99+' : unreadCount}</i>}</span>
       <span className="task-item__copy">
         <strong>{task.name}</strong>
         <small>{task.fixtures.length} 场 · {task.intervalMinutes} 分钟</small>
       </span>
       <StatusPill status={task.status} />
     </button>
+  );
+}
+
+function ReminderHistoryPanel({ groups, unreadCount, onSelectTask }) {
+  const total = groups.reduce((count, group) => count + group.reminders.length, 0);
+  return (
+    <aside className="reminder-history-panel" aria-label="全部提醒历史">
+      <div className="reminder-history-panel__header">
+        <div><span><BellRing size={17} /></span><div><p className="section-caption">提醒历史</p><h2>全部提醒</h2></div></div>
+        <em className={unreadCount ? 'has-unread' : ''}>{unreadCount ? `${unreadCount} 条未读` : `${total} 条`}</em>
+      </div>
+      {groups.length ? <div className="reminder-day-list">{groups.map((group) => (
+        <section className="reminder-day" key={group.day}>
+          <div className="reminder-day__heading"><strong>{reminderDateLabel(group.day)}</strong><span>{group.reminders.length} 条</span></div>
+          <div className="reminder-day__events">{group.reminders.map((event) => (
+            <button type="button" className={`reminder-event ${event.unread ? 'reminder-event--unread' : ''}`} key={event.reminderId} onClick={() => onSelectTask(event.taskId)}>
+              <span className="reminder-event__icon"><BellRing size={13} /></span>
+              <span className="reminder-event__copy"><strong>{event.taskName}</strong><small>{formatDateTime(event.triggeredAt, false)}</small><p>{event.message}</p></span>
+              <ChevronRight size={14} />
+            </button>
+          ))}</div>
+        </section>
+      ))}</div> : <div className="reminder-history-panel__empty"><BellRing size={22} /><strong>暂无提醒记录</strong><span>监控指标触发后会按天汇总在这里。</span></div>}
+    </aside>
   );
 }
 
@@ -410,7 +441,7 @@ function TaskDetail({ task, translations, apiKeys = [], onAction, onEdit }) {
   const rules = normalizedTaskRules(task);
   const boundKey = apiKeys.find((item) => item.id === task.apiKeyId);
   return (
-    <section className="task-detail">
+    <section className="task-detail" id="task-detail">
       <div className="task-detail__header">
         <div><div className="task-detail__kicker"><StatusPill status={task.status} /><span>ID {task.id.slice(0, 8)}</span></div><h2>{task.name}</h2><p>{task.error ? '本轮比分更新失败，提醒条件尚未重新判断' : task.lastMessage}</p></div>
         <div className="task-detail__actions">
@@ -449,10 +480,6 @@ function TaskDetail({ task, translations, apiKeys = [], onAction, onEdit }) {
       <div className="task-fixtures">
         {task.fixtures.map((fixture) => <MatchCard key={fixture.fixture.id} fixture={fixture} compact translations={translations} selected={fixture.fixture.id === task.triggerFixtureId} />)}
       </div>
-      <section className="trigger-history">
-        <div className="trigger-history__heading"><div><BellRing size={16} /><strong>提醒历史</strong></div><span>共 {task.triggerHistory?.length || 0} 条</span></div>
-        {task.triggerHistory?.length ? <div className="trigger-history__list">{[...task.triggerHistory].reverse().map((event, index) => <div className="trigger-history__item" key={`${event.key}-${event.triggeredAt}-${index}`}><span><BellRing size={13} /></span><div><strong>{event.message}</strong><small>指标 {rules.findIndex((rule) => rule.id === event.ruleId) + 1 || event.ruleId} · {formatDateTime(event.triggeredAt)}</small></div></div>)}</div> : <p className="trigger-history__empty">尚未触发提醒，任务会继续按设置的指标监控。</p>}
-      </section>
       {task.error && <div className="error-banner" role="alert"><Zap size={18} /><div><strong>比分更新失败{task.errorCode ? ` · ${task.errorCode}` : ''}</strong><p>{task.error === 'fetch failed' ? '无法连接比分服务，请检查服务器网络或代理设置。' : task.error}</p><p>{task.status === 'error' ? `连续失败 ${task.consecutiveFailures || 1} 次 · 将于 ${formatDateTime(task.nextCheckAt)} 自动重试，也可点击“立即重试”。` : '任务已停止，可再次启动检查连接。'}</p></div></div>}
     </section>
   );
@@ -505,6 +532,8 @@ export default function App() {
   const usageWarningLevelsRef = useRef({});
 
   const activeTask = useMemo(() => tasks.find((task) => task.id === activeTaskId) || tasks[0] || null, [tasks, activeTaskId]);
+  const reminderGroups = useMemo(() => groupedReminderHistory(tasks), [tasks]);
+  const totalUnreadReminders = useMemo(() => tasks.reduce((count, task) => count + unreadReminderCount(task), 0), [tasks]);
   const activeApiKeyProfile = apiKeys.find((item) => item.active) || null;
   const activeFixtureScope = fixtureSnapshotScope(health.activeApiKeyId, health.providerId);
   const runningCount = tasks.filter((task) => ['running', 'scheduled'].includes(task.status)).length;
@@ -783,6 +812,24 @@ export default function App() {
     setTasks(body.tasks || []);
   }
 
+  function selectTask(taskId) {
+    const selectedTask = tasks.find((task) => task.id === taskId);
+    setActiveTaskId(taskId);
+    navigatePage('monitor');
+    window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
+      document.getElementById('task-detail')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }));
+    if (!selectedTask || !unreadReminderCount(selectedTask)) return;
+    const acknowledgedAt = latestReminderAt(selectedTask);
+    if (!acknowledgedAt) return;
+    setTasks((current) => current.map((task) => task.id === taskId
+      ? { ...task, lastAcknowledgedTriggerAt: new Date(acknowledgedAt).toISOString() }
+      : task));
+    fetch(`/api/tasks/${encodeURIComponent(taskId)}/acknowledge`, { method: 'POST' })
+      .then((response) => { if (!response.ok) throw new Error('提醒状态更新失败'); })
+      .catch(() => loadTasks());
+  }
+
   function playBuiltInAlert() {
     const context = audioContextRef.current;
     if (!context) return;
@@ -1020,7 +1067,7 @@ export default function App() {
       {activePage === 'monitor' && <aside className="sidebar" id="tasks">
         <div className="sidebar__label"><span>监控任务</span><strong>{tasks.length}</strong></div>
         <nav className="task-list" aria-label="监控任务列表">
-          {tasks.map((task) => <TaskListItem key={task.id} task={task} active={activeTask?.id === task.id} onClick={() => { setActiveTaskId(task.id); navigatePage('monitor'); }} />)}
+          {tasks.map((task) => <TaskListItem key={task.id} task={task} active={activeTask?.id === task.id} unreadCount={unreadReminderCount(task)} onClick={() => selectTask(task.id)} />)}
           {!tasks.length && <p className="sidebar__empty">暂无任务<br />从右上角创建第一个监控</p>}
         </nav>
         <div className="sound-card">
@@ -1042,7 +1089,7 @@ export default function App() {
           <dl className="summary-list">
             <div><dt>进行中的任务</dt><dd>{runningCount}</dd></div>
             <div><dt>当前日期赛事</dt><dd>{fixtures.length}</dd></div>
-            <div><dt>默认监控频次</dt><dd>3 <small>分钟</small></dd></div>
+            <div><dt>默认监控频次</dt><dd>5 <small>分钟</small></dd></div>
           </dl>
         </section>
 
@@ -1073,8 +1120,7 @@ export default function App() {
           </div>
         </section>}
 
-        {activePage === 'monitor' && apiKeys.length > 0 && <section className="api-usage-dashboard"><div className="api-usage-dashboard__heading"><div><p className="section-caption">统一 API 用量</p><h2>今日真实请求 {apiKeys.reduce((total, item) => total + Number(item.todayUsage?.total || 0), 0)} 次</h2></div><button className="button button--secondary button--small" onClick={openApiKeySettings}><KeyRound size={15} />管理 Key</button></div><div className="api-usage-dashboard__grid">{apiKeys.map((item) => <ApiUsageHistory key={item.id} item={item} />)}</div></section>}
-        {activePage === 'monitor' && (activeTask ? <TaskDetail task={activeTask} translations={teamTranslations} apiKeys={apiKeys} onAction={taskAction} onEdit={beginEditTask} /> : <EmptyState onCreate={() => navigatePage('fixtures')} />)}
+        {activePage === 'monitor' && <div className="monitor-management-grid"><div className="monitor-management-grid__main">{apiKeys.length > 0 && <section className="api-usage-dashboard"><div className="api-usage-dashboard__heading"><div><p className="section-caption">统一 API 用量</p><h2>今日真实请求 {apiKeys.reduce((total, item) => total + Number(item.todayUsage?.total || 0), 0)} 次</h2></div><button className="button button--secondary button--small" onClick={openApiKeySettings}><KeyRound size={15} />管理 Key</button></div><div className="api-usage-dashboard__grid">{apiKeys.map((item) => <ApiUsageHistory key={item.id} item={item} />)}</div></section>}{activeTask ? <TaskDetail task={activeTask} translations={teamTranslations} apiKeys={apiKeys} onAction={taskAction} onEdit={beginEditTask} /> : <EmptyState onCreate={() => navigatePage('fixtures')} />}</div><ReminderHistoryPanel groups={reminderGroups} unreadCount={totalUnreadReminders} onSelectTask={selectTask} /></div>}
       </main>
 
       {drawerOpen && <CreateTaskPanel fixtures={fixtures} selectedIds={selectedIds} setSelectedIds={setSelectedIds} monitorDate={date} translations={teamTranslations} apiKeys={apiKeys} task={editingTask} onClose={() => { setDrawerOpen(false); setEditingTask(null); }} onError={showToast} onArmSound={() => enableSound(false)} onCreated={(task) => { const edited = Boolean(editingTask); setDrawerOpen(false); setEditingTask(null); setSelectedIds([]); setActiveTaskId(task.id); navigatePage('monitor'); loadTasks(); showToast(edited ? '监控任务已更新' : '监控任务已创建，声音提醒已启用'); }} />}
