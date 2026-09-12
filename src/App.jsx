@@ -829,29 +829,14 @@ export default function App() {
     setSoundEnabled(true);
     if (requestNotifications && 'Notification' in window && Notification.permission === 'default') Notification.requestPermission();
     if (!soundArmPromiseRef.current) soundArmPromiseRef.current = (async () => {
-      const audio = audioRef.current;
       const AudioContext = window.AudioContext || window.webkitAudioContext;
       if (!audioContextRef.current && AudioContext) audioContextRef.current = new AudioContext();
-      const contextReady = audioContextRef.current
+      const ready = audioContextRef.current
         ? audioContextRef.current.resume().then(() => audioContextRef.current.state === 'running').catch(() => false)
         : Promise.resolve(false);
-      const audioReady = audio ? (() => {
-        const previousMuted = audio.muted;
-        audio.muted = true;
-        audio.currentTime = 0;
-        return audio.play().then(() => {
-          audio.pause();
-          audio.currentTime = 0;
-          audio.muted = previousMuted;
-          return true;
-        }).catch(() => {
-          audio.muted = previousMuted;
-          return false;
-        });
-      })() : Promise.resolve(false);
-      const ready = (await Promise.all([contextReady, audioReady])).some(Boolean);
-      setSoundReady(ready);
-      return ready;
+      const unlocked = await ready;
+      setSoundReady(unlocked);
+      return unlocked;
     })();
     const pending = soundArmPromiseRef.current;
     const ready = await pending;
@@ -1005,7 +990,7 @@ export default function App() {
         <nav className="topbar__nav" aria-label="页面导航"><button className={activePage === 'fixtures' ? 'is-active' : ''} onClick={() => navigatePage('fixtures')}>查询比赛</button><button className={activePage === 'monitor' ? 'is-active' : ''} onClick={() => navigatePage('monitor')}>监控管理</button></nav>
         <div className="topbar__actions">
           <button className={`api-state ${health.activeApiKeyStatus === 'error' || activeApiKeyProfile?.usageLevel === 'danger' ? 'api-state--error' : activeApiKeyProfile?.usageLevel === 'warning' ? 'api-state--warning' : health.apiConfigured ? 'api-state--live' : ''}`} onClick={openApiKeySettings} title="管理、测试和切换比分 API">{health.activeApiKeyStatus === 'error' || ['warning', 'danger'].includes(activeApiKeyProfile?.usageLevel) ? <Zap size={16} /> : <KeyRound size={16} />}<span>{health.apiConfigured ? `${health.providerLabel || 'API'} ${health.apiKeyHint || '已配置'}${health.activeApiKeyStatus === 'error' ? ' · 异常' : activeApiKeyProfile?.usageLevel === 'danger' ? ' · 额度紧张' : activeApiKeyProfile?.usageLevel === 'warning' ? ' · 用量预警' : ''}${health.apiKeyCount > 1 ? ` · ${health.apiKeyCount} 个` : ''}` : '导入 API Key'}</span></button>
-          <button className={`sound-control ${soundEnabled ? 'sound-control--on' : ''}`} onClick={() => enableSound(true)} title={soundReady ? '提醒歌曲可以正常播放' : '声音默认开启，首次点击页面后自动就绪'}><Volume2 size={17} />{soundReady ? '声音已就绪' : '声音已开启'}</button>
+          <button className={`sound-control ${soundEnabled ? 'sound-control--on' : ''}`} onClick={() => enableSound(true)} title={soundReady ? '提醒声音已解锁' : '声音默认开启，首次点击页面后自动就绪'}><Volume2 size={17} />{soundReady ? '声音已就绪' : '声音已开启'}</button>
           <button className="button button--primary button--small" onClick={beginCreateTask}><Plus size={17} />新建监控</button>
         </div>
       </header>
@@ -1019,7 +1004,7 @@ export default function App() {
         <div className="sound-card">
           <span className="sound-card__icon"><Headphones size={19} /></span>
           <div><small>{customAudioSelected ? '上次选择' : '默认提醒歌曲'}</small><strong title={audioName}>{audioName}</strong></div>
-          <button className="icon-button" aria-label="试听提醒歌曲" onClick={async () => { await enableSound(false, false); await playSelectedAudio(); }}><Play size={16} /></button>
+          <button className="icon-button" aria-label="试听提醒歌曲" onClick={() => { enableSound(false, false); playSelectedAudio(); }}><Play size={16} /></button>
           <label className="icon-button" aria-label="上传提醒音乐"><Music2 size={17} /><input type="file" accept="audio/*" onChange={handleAudioFile} /></label>
           <audio ref={audioRef} src={audioUrl} preload="auto" />
         </div>
@@ -1076,7 +1061,7 @@ export default function App() {
 
       {apiKeyOpen && <div className="alert-overlay" onMouseDown={(event) => event.target === event.currentTarget && setApiKeyOpen(false)}><form className="alert-dialog api-key-dialog" onSubmit={importApiKey}><span className="alert-dialog__icon"><KeyRound size={30} /></span><p className="section-caption">API 设置</p><h2>管理比分 API</h2><p>每个 Key 绑定一个平台；请求次数按北京时间每天独立统计并实时更新。</p>{loadingApiKeys ? <div className="api-key-list__loading"><LoaderCircle className="spin" size={18} />正在读取…</div> : apiKeys.length > 0 && <div className="api-key-list" role="list">{apiKeys.map((item) => <div role="listitem" key={item.id} className={`api-key-item ${item.active ? 'api-key-item--active' : ''} ${item.testStatus === 'error' ? 'api-key-item--error' : ''}`}><button type="button" className="api-key-item__select" onClick={() => switchApiKey(item.id)} disabled={Boolean(switchingApiKeyId || testingApiKeyId || deletingApiKeyId || savingApiKey)}><span><strong>{item.label}</strong><small>{health.providers?.find((provider) => provider.id === item.provider)?.label || item.provider} · {item.hint}{item.source === 'environment' ? ' · 环境变量' : ''}</small><small className="api-key-item__usage">今日请求 {item.todayUsage?.total || 0} 次 · 比赛 {item.todayUsage?.fixtures || 0} · 测试 {item.todayUsage?.tests || 0}</small><small className={`api-key-item__health api-key-item__health--${item.testStatus}`}>{item.testStatus === 'healthy' ? `连接正常${item.testQuota?.remaining != null ? ` · 剩余 ${item.testQuota.remaining}/${item.testQuota.limit}` : ''}` : item.testStatus === 'error' ? `连接异常 · ${item.testMessage}` : '尚未测试'}</small></span>{item.active ? <em><Check size={14} />使用中</em> : switchingApiKeyId === item.id ? <LoaderCircle className="spin" size={16} /> : <em>切换</em>}</button><button type="button" className="api-key-item__edit" onClick={() => editApiKey(item)} disabled={Boolean(testingApiKeyId || switchingApiKeyId || deletingApiKeyId || savingApiKey || item.source === 'environment')} title={item.source === 'environment' ? '环境变量 Key 请修改服务器配置' : '修改名称和绑定平台'}><Pencil size={13} />编辑</button><button type="button" className="api-key-item__test" onClick={() => testApiKey(item.id)} disabled={Boolean(testingApiKeyId || switchingApiKeyId || deletingApiKeyId || savingApiKey)}>{testingApiKeyId === item.id ? <LoaderCircle className="spin" size={14} /> : <Activity size={14} />}测试</button><button type="button" className="api-key-item__delete" onClick={() => deleteApiKey(item)} disabled={Boolean(testingApiKeyId || switchingApiKeyId || deletingApiKeyId || savingApiKey)} title={item.source === 'environment' ? '从页面停用并隐藏该环境变量 Key' : '删除 API Key'}>{deletingApiKeyId === item.id ? <LoaderCircle className="spin" size={14} /> : <Trash2 size={14} />}</button></div>)}</div>}<div className="api-key-form">{editingApiKeyId && <div className="api-key-editing">正在修改现有 Key；保存后将使用新平台重新测试，Key 内容保持不变。</div>}<label className="field"><span>{editingApiKeyId ? '绑定平台' : 'API 平台'}</span><select value={apiProviderId} onChange={(event) => setApiProviderId(event.target.value)}>{(health.providers || [{ id: 'api-football', label: 'API-Football' }, { id: 'the-stats-api', label: 'TheStatsAPI' }, { id: 'the-sports-db', label: 'TheSportsDB' }]).map((provider) => <option key={provider.id} value={provider.id}>{provider.label}</option>)}</select></label><label className="field"><span>名称（可选）</span><input maxLength="40" value={apiKeyLabel} onChange={(event) => setApiKeyLabel(event.target.value)} placeholder="例如：比分备用账号" /></label>{!editingApiKeyId && <label className="field"><span>新增 API Key</span><input type="password" autoComplete="off" value={apiKeyValue} onChange={(event) => setApiKeyValue(event.target.value)} placeholder={apiProviderId === 'the-sports-db' ? '免费 Key 可填写 123' : '粘贴对应平台的 API Key'} /></label>}</div><div className="api-key-dialog__actions"><button type="button" className="button button--ghost" onClick={editingApiKeyId ? cancelApiKeyEdit : () => setApiKeyOpen(false)}>{editingApiKeyId ? '取消修改' : '完成'}</button><button className="button button--primary" disabled={savingApiKey || deletingApiKeyId || (!editingApiKeyId && !apiKeyValue.trim())}>{savingApiKey ? <LoaderCircle className="spin" size={17} /> : <KeyRound size={17} />}{editingApiKeyId ? '保存修改' : '保存并启用'}</button></div></form></div>}
 
-      {alertTask && <div className="alert-overlay"><div className="alert-dialog"><span className="alert-dialog__icon"><BellRing size={32} /></span><p className="section-caption">监控提醒</p><h2>比分条件已达成</h2><p>{alertTask.lastMessage}</p><div className="alert-dialog__actions"><button className="button button--secondary" onClick={async () => { await enableSound(false, false); await playSelectedAudio(); }}><Volume2 size={16} />播放提醒声音</button><button className="button button--primary" onClick={() => { if (audioRef.current) audioRef.current.pause(); setAlertTask(null); }}>收到，停止提醒</button></div></div></div>}
+      {alertTask && <div className="alert-overlay"><div className="alert-dialog"><span className="alert-dialog__icon"><BellRing size={32} /></span><p className="section-caption">监控提醒</p><h2>比分条件已达成</h2><p>{alertTask.lastMessage}</p><div className="alert-dialog__actions"><button className="button button--secondary" onClick={() => { enableSound(false, false); playSelectedAudio(); }}><Volume2 size={16} />播放提醒声音</button><button className="button button--primary" onClick={() => { if (audioRef.current) audioRef.current.pause(); setAlertTask(null); }}>收到，停止提醒</button></div></div></div>}
       {toast && <div className="toast"><Check size={16} />{toast}</div>}
     </div>
   );
