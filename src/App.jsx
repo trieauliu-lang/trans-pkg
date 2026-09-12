@@ -477,7 +477,7 @@ export default function App() {
   const [editingTask, setEditingTask] = useState(null);
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [soundReady, setSoundReady] = useState(false);
-  const [audioUrl, setAudioUrl] = useState(DEFAULT_AUDIO_URL);
+  const [audioUrl, setAudioUrl] = useState('');
   const [audioName, setAudioName] = useState(DEFAULT_AUDIO_NAME);
   const [customAudioSelected, setCustomAudioSelected] = useState(false);
   const [alertTask, setAlertTask] = useState(null);
@@ -800,8 +800,13 @@ export default function App() {
     });
   }
 
-  async function playSelectedAudio() {
-    if (!audioRef.current) return false;
+  async function playSelectedAudio(loop = false) {
+    if (!audioRef.current || !audioUrl) {
+      playBuiltInAlert();
+      showToast('提醒歌曲仍在加载，已先播放提示音');
+      return false;
+    }
+    audioRef.current.loop = loop;
     audioRef.current.currentTime = 0;
     audioRef.current.volume = 1;
     audioRef.current.muted = false;
@@ -812,7 +817,7 @@ export default function App() {
     } catch {
       playBuiltInAlert();
       setSoundReady(false);
-      showToast('浏览器阻止了歌曲播放，请点击页面上的“播放提醒声音”');
+      showToast('歌曲播放失败，已改用提示音；请点击“播放提醒声音”重试');
       return false;
     }
   }
@@ -822,7 +827,7 @@ export default function App() {
       showToast('提醒已触发，请点击“启用声音”后试听');
       return;
     }
-    playSelectedAudio();
+    playSelectedAudio(true);
   }
 
   async function enableSound(preview = true, requestNotifications = true) {
@@ -894,15 +899,32 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    loadSavedAudio().then((saved) => {
-      if (!saved?.blob) return;
-      const savedUrl = URL.createObjectURL(saved.blob);
-      customAudioUrlRef.current = savedUrl;
-      setAudioUrl(savedUrl);
-      setAudioName(saved.name);
-      setCustomAudioSelected(true);
-    }).catch(() => showToast('未能读取上一次设置的歌曲'));
+    let cancelled = false;
+    async function prepareAudio() {
+      try {
+        const saved = await loadSavedAudio();
+        let blob = saved?.blob;
+        if (!blob) {
+          const response = await fetch(DEFAULT_AUDIO_URL);
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          blob = await response.blob();
+        }
+        const localUrl = URL.createObjectURL(blob);
+        if (cancelled) {
+          URL.revokeObjectURL(localUrl);
+          return;
+        }
+        customAudioUrlRef.current = localUrl;
+        setAudioUrl(localUrl);
+        setAudioName(saved?.blob ? saved.name : DEFAULT_AUDIO_NAME);
+        setCustomAudioSelected(Boolean(saved?.blob));
+      } catch {
+        if (!cancelled) showToast('默认提醒歌曲加载失败，将使用提示音');
+      }
+    }
+    prepareAudio();
     return () => {
+      cancelled = true;
       if (customAudioUrlRef.current) URL.revokeObjectURL(customAudioUrlRef.current);
     };
   }, []);
@@ -1004,7 +1026,7 @@ export default function App() {
         <div className="sound-card">
           <span className="sound-card__icon"><Headphones size={19} /></span>
           <div><small>{customAudioSelected ? '上次选择' : '默认提醒歌曲'}</small><strong title={audioName}>{audioName}</strong></div>
-          <button className="icon-button" aria-label="试听提醒歌曲" onClick={() => { enableSound(false, false); playSelectedAudio(); }}><Play size={16} /></button>
+          <button className="icon-button" aria-label="试听提醒歌曲" disabled={!audioUrl} onClick={() => { enableSound(false, false); playSelectedAudio(false); }}><Play size={16} /></button>
           <label className="icon-button" aria-label="上传提醒音乐"><Music2 size={17} /><input type="file" accept="audio/*" onChange={handleAudioFile} /></label>
           <audio ref={audioRef} src={audioUrl} preload="auto" />
         </div>
@@ -1061,7 +1083,7 @@ export default function App() {
 
       {apiKeyOpen && <div className="alert-overlay" onMouseDown={(event) => event.target === event.currentTarget && setApiKeyOpen(false)}><form className="alert-dialog api-key-dialog" onSubmit={importApiKey}><span className="alert-dialog__icon"><KeyRound size={30} /></span><p className="section-caption">API 设置</p><h2>管理比分 API</h2><p>每个 Key 绑定一个平台；请求次数按北京时间每天独立统计并实时更新。</p>{loadingApiKeys ? <div className="api-key-list__loading"><LoaderCircle className="spin" size={18} />正在读取…</div> : apiKeys.length > 0 && <div className="api-key-list" role="list">{apiKeys.map((item) => <div role="listitem" key={item.id} className={`api-key-item ${item.active ? 'api-key-item--active' : ''} ${item.testStatus === 'error' ? 'api-key-item--error' : ''}`}><button type="button" className="api-key-item__select" onClick={() => switchApiKey(item.id)} disabled={Boolean(switchingApiKeyId || testingApiKeyId || deletingApiKeyId || savingApiKey)}><span><strong>{item.label}</strong><small>{health.providers?.find((provider) => provider.id === item.provider)?.label || item.provider} · {item.hint}{item.source === 'environment' ? ' · 环境变量' : ''}</small><small className="api-key-item__usage">今日请求 {item.todayUsage?.total || 0} 次 · 比赛 {item.todayUsage?.fixtures || 0} · 测试 {item.todayUsage?.tests || 0}</small><small className={`api-key-item__health api-key-item__health--${item.testStatus}`}>{item.testStatus === 'healthy' ? `连接正常${item.testQuota?.remaining != null ? ` · 剩余 ${item.testQuota.remaining}/${item.testQuota.limit}` : ''}` : item.testStatus === 'error' ? `连接异常 · ${item.testMessage}` : '尚未测试'}</small></span>{item.active ? <em><Check size={14} />使用中</em> : switchingApiKeyId === item.id ? <LoaderCircle className="spin" size={16} /> : <em>切换</em>}</button><button type="button" className="api-key-item__edit" onClick={() => editApiKey(item)} disabled={Boolean(testingApiKeyId || switchingApiKeyId || deletingApiKeyId || savingApiKey || item.source === 'environment')} title={item.source === 'environment' ? '环境变量 Key 请修改服务器配置' : '修改名称和绑定平台'}><Pencil size={13} />编辑</button><button type="button" className="api-key-item__test" onClick={() => testApiKey(item.id)} disabled={Boolean(testingApiKeyId || switchingApiKeyId || deletingApiKeyId || savingApiKey)}>{testingApiKeyId === item.id ? <LoaderCircle className="spin" size={14} /> : <Activity size={14} />}测试</button><button type="button" className="api-key-item__delete" onClick={() => deleteApiKey(item)} disabled={Boolean(testingApiKeyId || switchingApiKeyId || deletingApiKeyId || savingApiKey)} title={item.source === 'environment' ? '从页面停用并隐藏该环境变量 Key' : '删除 API Key'}>{deletingApiKeyId === item.id ? <LoaderCircle className="spin" size={14} /> : <Trash2 size={14} />}</button></div>)}</div>}<div className="api-key-form">{editingApiKeyId && <div className="api-key-editing">正在修改现有 Key；保存后将使用新平台重新测试，Key 内容保持不变。</div>}<label className="field"><span>{editingApiKeyId ? '绑定平台' : 'API 平台'}</span><select value={apiProviderId} onChange={(event) => setApiProviderId(event.target.value)}>{(health.providers || [{ id: 'api-football', label: 'API-Football' }, { id: 'the-stats-api', label: 'TheStatsAPI' }, { id: 'the-sports-db', label: 'TheSportsDB' }]).map((provider) => <option key={provider.id} value={provider.id}>{provider.label}</option>)}</select></label><label className="field"><span>名称（可选）</span><input maxLength="40" value={apiKeyLabel} onChange={(event) => setApiKeyLabel(event.target.value)} placeholder="例如：比分备用账号" /></label>{!editingApiKeyId && <label className="field"><span>新增 API Key</span><input type="password" autoComplete="off" value={apiKeyValue} onChange={(event) => setApiKeyValue(event.target.value)} placeholder={apiProviderId === 'the-sports-db' ? '免费 Key 可填写 123' : '粘贴对应平台的 API Key'} /></label>}</div><div className="api-key-dialog__actions"><button type="button" className="button button--ghost" onClick={editingApiKeyId ? cancelApiKeyEdit : () => setApiKeyOpen(false)}>{editingApiKeyId ? '取消修改' : '完成'}</button><button className="button button--primary" disabled={savingApiKey || deletingApiKeyId || (!editingApiKeyId && !apiKeyValue.trim())}>{savingApiKey ? <LoaderCircle className="spin" size={17} /> : <KeyRound size={17} />}{editingApiKeyId ? '保存修改' : '保存并启用'}</button></div></form></div>}
 
-      {alertTask && <div className="alert-overlay"><div className="alert-dialog"><span className="alert-dialog__icon"><BellRing size={32} /></span><p className="section-caption">监控提醒</p><h2>比分条件已达成</h2><p>{alertTask.lastMessage}</p><div className="alert-dialog__actions"><button className="button button--secondary" onClick={() => { enableSound(false, false); playSelectedAudio(); }}><Volume2 size={16} />播放提醒声音</button><button className="button button--primary" onClick={() => { if (audioRef.current) audioRef.current.pause(); setAlertTask(null); }}>收到，停止提醒</button></div></div></div>}
+      {alertTask && <div className="alert-overlay"><div className="alert-dialog"><span className="alert-dialog__icon"><BellRing size={32} /></span><p className="section-caption">监控提醒</p><h2>比分条件已达成</h2><p>{alertTask.lastMessage}</p><div className="alert-dialog__actions"><button className="button button--secondary" onClick={() => { enableSound(false, false); playSelectedAudio(true); }}><Volume2 size={16} />播放提醒声音</button><button className="button button--primary" onClick={() => { if (audioRef.current) { audioRef.current.loop = false; audioRef.current.pause(); audioRef.current.currentTime = 0; } setAlertTask(null); }}>收到，停止提醒</button></div></div></div>}
       {toast && <div className="toast"><Check size={16} />{toast}</div>}
     </div>
   );
