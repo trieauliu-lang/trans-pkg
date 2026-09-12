@@ -46,6 +46,7 @@ const OPERATOR_LABELS = { gt: '大于', gte: '大于等于', eq: '等于', lt: '
 const EVALUATE_WHEN_LABELS = { in_play: '比赛开始后持续判断', all_finished: '全部比赛结束后', each_finished: '每场比赛结束时', halftime: '比赛进入半场后' };
 const METRIC_LABELS = { total_goals: '总进球数', goal_difference: '比分差', home_leading: '主队领先客队', home_trailing: '主队落后客队' };
 const FINISHED = new Set(['FT', 'AET', 'PEN']);
+const TERMINAL = new Set(['FT', 'AET', 'PEN', 'CANC', 'ABD', 'AWD', 'WO', 'PST', 'SUSP']);
 const DEFAULT_AUDIO_URL = '/default-alert.mp3';
 const DEFAULT_AUDIO_NAME = '刘欢 - 好汉歌';
 
@@ -116,6 +117,14 @@ function monitorRuleLabel(rule, fixtures, translations = {}) {
   return `${target} · ${EVALUATE_WHEN_LABELS[rule.evaluateWhen] || '比赛开始后持续判断'} · ${condition}`;
 }
 
+function homeTrailingRuleComplete(rule, fixtures) {
+  if (rule.metric !== 'home_trailing') return false;
+  const targets = rule.fixtureId && rule.fixtureId !== 'all'
+    ? fixtures.filter((fixture) => String(fixture.fixture.id) === String(rule.fixtureId))
+    : fixtures;
+  return targets.length > 0 && targets.every((fixture) => TERMINAL.has(fixture.fixture.status.short));
+}
+
 function localDateValue(date = new Date()) {
   const offset = date.getTimezoneOffset() * 60_000;
   return new Date(date.getTime() - offset).toISOString().slice(0, 10);
@@ -130,7 +139,12 @@ function localDateTimeValue(date = new Date(Date.now() + 5 * 60_000)) {
   return new Date(date.getTime() - offset).toISOString().slice(0, 16);
 }
 
-function defaultStartAt(monitorDate) {
+function defaultStartAt(monitorDate, fixtures = []) {
+  const kickoff = fixtures
+    .map((fixture) => Date.parse(fixture.fixture?.date))
+    .filter(Number.isFinite)
+    .sort((left, right) => left - right)[0];
+  if (kickoff) return localDateTimeValue(new Date(kickoff));
   if (monitorDate === localDateValue()) return localDateTimeValue();
   return `${monitorDate}T18:00`;
 }
@@ -256,6 +270,8 @@ function TaskListItem({ task, active, onClick }) {
 function CreateTaskPanel({ fixtures, selectedIds, setSelectedIds, monitorDate, translations, apiKeys = [], task = null, onClose, onCreated, onError, onArmSound }) {
   const [submitting, setSubmitting] = useState(false);
   const fallbackApiKeyId = apiKeys.find((item) => item.active)?.id || apiKeys[0]?.id || '';
+  const availableFixtures = [...fixtures, ...(task?.fixtures || [])].filter((fixture, index, items) => items.findIndex((item) => String(item.fixture.id) === String(fixture.fixture.id)) === index);
+  const selectedFixtures = availableFixtures.filter((item) => selectedIds.some((id) => String(id) === String(item.fixture.id)));
   const [form, setForm] = useState(() => task ? {
     name: task.name,
     startMode: task.status === 'scheduled' ? 'scheduled' : 'now',
@@ -267,15 +283,13 @@ function CreateTaskPanel({ fixtures, selectedIds, setSelectedIds, monitorDate, t
   } : {
     name: '今晚比分提醒',
     startMode: 'scheduled',
-    startAt: defaultStartAt(monitorDate),
+    startAt: defaultStartAt(monitorDate, selectedFixtures),
     intervalMinutes: 3,
     apiKeyId: fallbackApiKeyId,
     rules: [createMonitorRule()],
     resetHistory: false,
   });
 
-  const availableFixtures = [...fixtures, ...(task?.fixtures || [])].filter((fixture, index, items) => items.findIndex((item) => String(item.fixture.id) === String(fixture.fixture.id)) === index);
-  const selectedFixtures = availableFixtures.filter((item) => selectedIds.some((id) => String(id) === String(item.fixture.id)));
   const update = (key, value) => setForm((current) => ({ ...current, [key]: value }));
   const updateRule = (id, key, value) => setForm((current) => ({
     ...current,
@@ -343,7 +357,7 @@ function CreateTaskPanel({ fixtures, selectedIds, setSelectedIds, monitorDate, t
           </section>
 
           <section className="form-section">
-            <div className="form-section__title"><span>02</span><div><strong>启动时间</strong><small>到点立即执行首次检查</small></div></div>
+            <div className="form-section__title"><span>02</span><div><strong>启动时间</strong><small>默认使用所选比赛最早开球时间</small></div></div>
             <div className="segmented">
               <button type="button" className={form.startMode === 'now' ? 'is-active' : ''} onClick={() => update('startMode', 'now')}>立即开始</button>
               <button type="button" className={form.startMode === 'scheduled' ? 'is-active' : ''} onClick={() => update('startMode', 'scheduled')}>定时开始</button>
@@ -415,7 +429,7 @@ function TaskDetail({ task, translations, apiKeys = [], onAction, onEdit }) {
 
       <div className={`monitor-beam monitor-beam--${meta.tone}`}>
         <div className="monitor-beam__copy"><span>提醒规则</span><strong>{task.status === 'running' ? '正在监控' : meta.label}</strong></div>
-        <div className="monitor-beam__rule">{rules.length} 个监控指标 · 已触发 {task.triggerCount || 0} 次 · 命中后继续监控</div>
+        <div className="monitor-beam__rule">{rules.length} 个监控指标 · 已触发 {task.triggerCount || 0} 次 · 比赛结束后自动停止</div>
       </div>
 
       <div className={`task-key-binding ${boundKey ? '' : 'task-key-binding--missing'}`}><KeyRound size={16} /><span>固定 API Key</span><strong>{boundKey ? `${boundKey.label} · ${boundKey.hint}` : task.apiKeyId ? '绑定的 Key 已不存在，请编辑任务' : '旧任务将在下次检查时自动固定当前 Key'}</strong></div>
@@ -423,7 +437,9 @@ function TaskDetail({ task, translations, apiKeys = [], onAction, onEdit }) {
       <div className="task-rule-list">
         {rules.map((rule, index) => {
           const firedCount = (task.triggeredRuleKeys || []).filter((key) => key.startsWith(`${rule.id}:`)).length;
-          return <div className={`task-rule-item ${firedCount ? 'task-rule-item--fired' : ''}`} key={rule.id || index}><span>{firedCount ? <Check size={13} /> : index + 1}</span><p>{monitorRuleLabel(rule, task.fixtures, translations)}</p><em>{firedCount ? `已提醒 ${firedCount} 次` : '监控中'}</em></div>;
+          const completed = homeTrailingRuleComplete(rule, task.fixtures);
+          const status = completed ? `${firedCount ? `已提醒 ${firedCount} 次 · ` : ''}已结束` : firedCount ? `已提醒 ${firedCount} 次` : task.status === 'stopped' ? '已停止' : '监控中';
+          return <div className={`task-rule-item ${firedCount ? 'task-rule-item--fired' : ''}`} key={rule.id || index}><span>{firedCount ? <Check size={13} /> : index + 1}</span><p>{monitorRuleLabel(rule, task.fixtures, translations)}</p><em>{status}</em></div>;
         })}
       </div>
 
@@ -459,7 +475,8 @@ export default function App() {
   const [loadingFixtures, setLoadingFixtures] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editingTask, setEditingTask] = useState(null);
-  const [soundEnabled, setSoundEnabled] = useState(false);
+  const [soundEnabled, setSoundEnabled] = useState(true);
+  const [soundReady, setSoundReady] = useState(false);
   const [audioUrl, setAudioUrl] = useState(DEFAULT_AUDIO_URL);
   const [audioName, setAudioName] = useState(DEFAULT_AUDIO_NAME);
   const [customAudioSelected, setCustomAudioSelected] = useState(false);
@@ -481,6 +498,7 @@ export default function App() {
   const [savingTranslation, setSavingTranslation] = useState(false);
   const audioRef = useRef(null);
   const audioContextRef = useRef(null);
+  const soundArmPromiseRef = useRef(null);
   const customAudioUrlRef = useRef('');
   const translationRequestsRef = useRef(new Set());
   const fixtureRestoreRequestRef = useRef(0);
@@ -782,14 +800,21 @@ export default function App() {
     });
   }
 
-  function playSelectedAudio() {
-    if (!audioRef.current) return;
+  async function playSelectedAudio() {
+    if (!audioRef.current) return false;
     audioRef.current.currentTime = 0;
     audioRef.current.volume = 1;
-    audioRef.current.play().catch(() => {
+    audioRef.current.muted = false;
+    try {
+      await audioRef.current.play();
+      setSoundReady(true);
+      return true;
+    } catch {
       playBuiltInAlert();
-      showToast('歌曲播放失败，已改用提示音');
-    });
+      setSoundReady(false);
+      showToast('浏览器阻止了歌曲播放，请点击页面上的“播放提醒声音”');
+      return false;
+    }
   }
 
   function playAlert() {
@@ -800,13 +825,39 @@ export default function App() {
     playSelectedAudio();
   }
 
-  async function enableSound(preview = true) {
-    const AudioContext = window.AudioContext || window.webkitAudioContext;
-    if (!audioContextRef.current) audioContextRef.current = new AudioContext();
-    await audioContextRef.current.resume();
+  async function enableSound(preview = true, requestNotifications = true) {
     setSoundEnabled(true);
-    if (preview) playBuiltInAlert();
-    if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission();
+    if (requestNotifications && 'Notification' in window && Notification.permission === 'default') Notification.requestPermission();
+    if (!soundArmPromiseRef.current) soundArmPromiseRef.current = (async () => {
+      const audio = audioRef.current;
+      const AudioContext = window.AudioContext || window.webkitAudioContext;
+      if (!audioContextRef.current && AudioContext) audioContextRef.current = new AudioContext();
+      const contextReady = audioContextRef.current
+        ? audioContextRef.current.resume().then(() => audioContextRef.current.state === 'running').catch(() => false)
+        : Promise.resolve(false);
+      const audioReady = audio ? (() => {
+        const previousMuted = audio.muted;
+        audio.muted = true;
+        audio.currentTime = 0;
+        return audio.play().then(() => {
+          audio.pause();
+          audio.currentTime = 0;
+          audio.muted = previousMuted;
+          return true;
+        }).catch(() => {
+          audio.muted = previousMuted;
+          return false;
+        });
+      })() : Promise.resolve(false);
+      const ready = (await Promise.all([contextReady, audioReady])).some(Boolean);
+      setSoundReady(ready);
+      return ready;
+    })();
+    const pending = soundArmPromiseRef.current;
+    const ready = await pending;
+    if (soundArmPromiseRef.current === pending) soundArmPromiseRef.current = null;
+    if (preview && ready) playBuiltInAlert();
+    return ready;
   }
 
   async function handleAudioFile(event) {
@@ -822,7 +873,7 @@ export default function App() {
     setAudioUrl(nextUrl);
     setAudioName(file.name);
     setCustomAudioSelected(true);
-    await enableSound(false);
+    await enableSound(false, false);
     try {
       await saveAudio(file);
       showToast('提醒歌曲已保存，下次会自动使用');
@@ -830,6 +881,17 @@ export default function App() {
       showToast('歌曲可在本次使用，但浏览器未能持久保存');
     }
   }
+
+  useEffect(() => {
+    if (soundReady) return undefined;
+    const armOnFirstInteraction = () => { enableSound(false, false); };
+    window.addEventListener('pointerdown', armOnFirstInteraction, { capture: true });
+    window.addEventListener('keydown', armOnFirstInteraction, { capture: true });
+    return () => {
+      window.removeEventListener('pointerdown', armOnFirstInteraction, { capture: true });
+      window.removeEventListener('keydown', armOnFirstInteraction, { capture: true });
+    };
+  }, [soundReady, audioUrl]);
 
   useEffect(() => {
     Promise.all([
@@ -943,7 +1005,7 @@ export default function App() {
         <nav className="topbar__nav" aria-label="页面导航"><button className={activePage === 'fixtures' ? 'is-active' : ''} onClick={() => navigatePage('fixtures')}>查询比赛</button><button className={activePage === 'monitor' ? 'is-active' : ''} onClick={() => navigatePage('monitor')}>监控管理</button></nav>
         <div className="topbar__actions">
           <button className={`api-state ${health.activeApiKeyStatus === 'error' || activeApiKeyProfile?.usageLevel === 'danger' ? 'api-state--error' : activeApiKeyProfile?.usageLevel === 'warning' ? 'api-state--warning' : health.apiConfigured ? 'api-state--live' : ''}`} onClick={openApiKeySettings} title="管理、测试和切换比分 API">{health.activeApiKeyStatus === 'error' || ['warning', 'danger'].includes(activeApiKeyProfile?.usageLevel) ? <Zap size={16} /> : <KeyRound size={16} />}<span>{health.apiConfigured ? `${health.providerLabel || 'API'} ${health.apiKeyHint || '已配置'}${health.activeApiKeyStatus === 'error' ? ' · 异常' : activeApiKeyProfile?.usageLevel === 'danger' ? ' · 额度紧张' : activeApiKeyProfile?.usageLevel === 'warning' ? ' · 用量预警' : ''}${health.apiKeyCount > 1 ? ` · ${health.apiKeyCount} 个` : ''}` : '导入 API Key'}</span></button>
-          <button className={`sound-control ${soundEnabled ? 'sound-control--on' : ''}`} onClick={() => enableSound(true)}><Volume2 size={17} />{soundEnabled ? '声音已启用' : '启用声音'}</button>
+          <button className={`sound-control ${soundEnabled ? 'sound-control--on' : ''}`} onClick={() => enableSound(true)} title={soundReady ? '提醒歌曲可以正常播放' : '声音默认开启，首次点击页面后自动就绪'}><Volume2 size={17} />{soundReady ? '声音已就绪' : '声音已开启'}</button>
           <button className="button button--primary button--small" onClick={beginCreateTask}><Plus size={17} />新建监控</button>
         </div>
       </header>
@@ -957,7 +1019,7 @@ export default function App() {
         <div className="sound-card">
           <span className="sound-card__icon"><Headphones size={19} /></span>
           <div><small>{customAudioSelected ? '上次选择' : '默认提醒歌曲'}</small><strong title={audioName}>{audioName}</strong></div>
-          <button className="icon-button" aria-label="试听提醒歌曲" onClick={async () => { await enableSound(false); playSelectedAudio(); }}><Play size={16} /></button>
+          <button className="icon-button" aria-label="试听提醒歌曲" onClick={async () => { await enableSound(false, false); await playSelectedAudio(); }}><Play size={16} /></button>
           <label className="icon-button" aria-label="上传提醒音乐"><Music2 size={17} /><input type="file" accept="audio/*" onChange={handleAudioFile} /></label>
           <audio ref={audioRef} src={audioUrl} preload="auto" />
         </div>
@@ -1014,7 +1076,7 @@ export default function App() {
 
       {apiKeyOpen && <div className="alert-overlay" onMouseDown={(event) => event.target === event.currentTarget && setApiKeyOpen(false)}><form className="alert-dialog api-key-dialog" onSubmit={importApiKey}><span className="alert-dialog__icon"><KeyRound size={30} /></span><p className="section-caption">API 设置</p><h2>管理比分 API</h2><p>每个 Key 绑定一个平台；请求次数按北京时间每天独立统计并实时更新。</p>{loadingApiKeys ? <div className="api-key-list__loading"><LoaderCircle className="spin" size={18} />正在读取…</div> : apiKeys.length > 0 && <div className="api-key-list" role="list">{apiKeys.map((item) => <div role="listitem" key={item.id} className={`api-key-item ${item.active ? 'api-key-item--active' : ''} ${item.testStatus === 'error' ? 'api-key-item--error' : ''}`}><button type="button" className="api-key-item__select" onClick={() => switchApiKey(item.id)} disabled={Boolean(switchingApiKeyId || testingApiKeyId || deletingApiKeyId || savingApiKey)}><span><strong>{item.label}</strong><small>{health.providers?.find((provider) => provider.id === item.provider)?.label || item.provider} · {item.hint}{item.source === 'environment' ? ' · 环境变量' : ''}</small><small className="api-key-item__usage">今日请求 {item.todayUsage?.total || 0} 次 · 比赛 {item.todayUsage?.fixtures || 0} · 测试 {item.todayUsage?.tests || 0}</small><small className={`api-key-item__health api-key-item__health--${item.testStatus}`}>{item.testStatus === 'healthy' ? `连接正常${item.testQuota?.remaining != null ? ` · 剩余 ${item.testQuota.remaining}/${item.testQuota.limit}` : ''}` : item.testStatus === 'error' ? `连接异常 · ${item.testMessage}` : '尚未测试'}</small></span>{item.active ? <em><Check size={14} />使用中</em> : switchingApiKeyId === item.id ? <LoaderCircle className="spin" size={16} /> : <em>切换</em>}</button><button type="button" className="api-key-item__edit" onClick={() => editApiKey(item)} disabled={Boolean(testingApiKeyId || switchingApiKeyId || deletingApiKeyId || savingApiKey || item.source === 'environment')} title={item.source === 'environment' ? '环境变量 Key 请修改服务器配置' : '修改名称和绑定平台'}><Pencil size={13} />编辑</button><button type="button" className="api-key-item__test" onClick={() => testApiKey(item.id)} disabled={Boolean(testingApiKeyId || switchingApiKeyId || deletingApiKeyId || savingApiKey)}>{testingApiKeyId === item.id ? <LoaderCircle className="spin" size={14} /> : <Activity size={14} />}测试</button><button type="button" className="api-key-item__delete" onClick={() => deleteApiKey(item)} disabled={Boolean(testingApiKeyId || switchingApiKeyId || deletingApiKeyId || savingApiKey)} title={item.source === 'environment' ? '从页面停用并隐藏该环境变量 Key' : '删除 API Key'}>{deletingApiKeyId === item.id ? <LoaderCircle className="spin" size={14} /> : <Trash2 size={14} />}</button></div>)}</div>}<div className="api-key-form">{editingApiKeyId && <div className="api-key-editing">正在修改现有 Key；保存后将使用新平台重新测试，Key 内容保持不变。</div>}<label className="field"><span>{editingApiKeyId ? '绑定平台' : 'API 平台'}</span><select value={apiProviderId} onChange={(event) => setApiProviderId(event.target.value)}>{(health.providers || [{ id: 'api-football', label: 'API-Football' }, { id: 'the-stats-api', label: 'TheStatsAPI' }, { id: 'the-sports-db', label: 'TheSportsDB' }]).map((provider) => <option key={provider.id} value={provider.id}>{provider.label}</option>)}</select></label><label className="field"><span>名称（可选）</span><input maxLength="40" value={apiKeyLabel} onChange={(event) => setApiKeyLabel(event.target.value)} placeholder="例如：比分备用账号" /></label>{!editingApiKeyId && <label className="field"><span>新增 API Key</span><input type="password" autoComplete="off" value={apiKeyValue} onChange={(event) => setApiKeyValue(event.target.value)} placeholder={apiProviderId === 'the-sports-db' ? '免费 Key 可填写 123' : '粘贴对应平台的 API Key'} /></label>}</div><div className="api-key-dialog__actions"><button type="button" className="button button--ghost" onClick={editingApiKeyId ? cancelApiKeyEdit : () => setApiKeyOpen(false)}>{editingApiKeyId ? '取消修改' : '完成'}</button><button className="button button--primary" disabled={savingApiKey || deletingApiKeyId || (!editingApiKeyId && !apiKeyValue.trim())}>{savingApiKey ? <LoaderCircle className="spin" size={17} /> : <KeyRound size={17} />}{editingApiKeyId ? '保存修改' : '保存并启用'}</button></div></form></div>}
 
-      {alertTask && <div className="alert-overlay"><div className="alert-dialog"><span className="alert-dialog__icon"><BellRing size={32} /></span><p className="section-caption">监控提醒</p><h2>比分条件已达成</h2><p>{alertTask.lastMessage}</p><button className="button button--primary" onClick={() => { if (audioRef.current) audioRef.current.pause(); setAlertTask(null); }}>收到，停止提醒</button></div></div>}
+      {alertTask && <div className="alert-overlay"><div className="alert-dialog"><span className="alert-dialog__icon"><BellRing size={32} /></span><p className="section-caption">监控提醒</p><h2>比分条件已达成</h2><p>{alertTask.lastMessage}</p><div className="alert-dialog__actions"><button className="button button--secondary" onClick={async () => { await enableSound(false, false); await playSelectedAudio(); }}><Volume2 size={16} />播放提醒声音</button><button className="button button--primary" onClick={() => { if (audioRef.current) audioRef.current.pause(); setAlertTask(null); }}>收到，停止提醒</button></div></div></div>}
       {toast && <div className="toast"><Check size={16} />{toast}</div>}
     </div>
   );

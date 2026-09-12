@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import crypto from 'node:crypto';
-import { evaluateTaskRules, terminalTaskMessage, TERMINAL_STATUSES } from './rules.js';
+import { evaluateTaskRules, taskMonitoringComplete, terminalTaskMessage, TERMINAL_STATUSES } from './rules.js';
 import { retryDelay } from './footballClient.js';
 import { createFixtureCache } from './fixtureCache.js';
 import { createProviderClient, PROVIDERS } from './providers.js';
@@ -207,10 +207,12 @@ async function runTask(task) {
       task.triggerFixtureId = result.matches[0].fixtureId;
     }
     const allTerminal = fixtures.every((fixture) => TERMINAL_STATUSES.has(fixture.fixture.status.short));
-    if (allTerminal) {
+    if (taskMonitoringComplete(task, fixtures)) {
       task.status = 'stopped';
       task.nextCheckAt = null;
-      if (!result.matches.length) task.lastMessage = terminalTaskMessage(fixtures);
+      if (!result.matches.length) task.lastMessage = allTerminal
+        ? terminalTaskMessage(fixtures)
+        : '主队落后监控的比赛已结束，任务自动停止';
     } else {
       task.status = 'running';
       task.nextCheckAt = new Date(Date.now() + task.intervalMinutes * 60_000).toISOString();

@@ -85,6 +85,20 @@ function taskRules(task) {
   }];
 }
 
+export function taskMonitoringComplete(task, fixtures) {
+  if (!fixtures.length) return false;
+  if (fixtures.every((fixture) => TERMINAL_STATUSES.has(fixture.fixture.status.short))) return true;
+
+  const rules = taskRules(task);
+  return rules.length > 0 && rules.every((rule) => {
+    if (rule.metric !== 'home_trailing') return false;
+    const targets = rule.fixtureId && rule.fixtureId !== 'all'
+      ? fixtures.filter((fixture) => String(fixture.fixture.id) === String(rule.fixtureId))
+      : fixtures;
+    return targets.length > 0 && targets.every((fixture) => TERMINAL_STATUSES.has(fixture.fixture.status.short));
+  });
+}
+
 function ruleCandidates(rule, fixtures) {
   const targets = rule.fixtureId && rule.fixtureId !== 'all'
     ? fixtures.filter((fixture) => String(fixture.fixture.id) === String(rule.fixtureId))

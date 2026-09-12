@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { compare, evaluateTask, evaluateTaskRules, terminalTaskMessage, TERMINAL_STATUSES } from './rules.js';
+import { compare, evaluateTask, evaluateTaskRules, taskMonitoringComplete, terminalTaskMessage, TERMINAL_STATUSES } from './rules.js';
 
 const fixture = (id, status, home, away) => ({
   fixture: { id, status: { short: status } },
@@ -90,4 +90,21 @@ test('cancelled, abandoned, awarded, walkover, postponed and suspended matches a
   ['CANC', 'ABD', 'AWD', 'WO', 'PST', 'SUSP'].forEach((status) => assert.equal(TERMINAL_STATUSES.has(status), true));
   const cancelled = fixture(9, 'CANC', 0, 0);
   assert.match(terminalTaskMessage([cancelled]), /比赛取消/);
+});
+
+test('home-trailing monitoring stops when all of its target matches finish', () => {
+  const targeted = { rules: [{ id: 'trailing', fixtureId: '1', evaluateWhen: 'halftime', metric: 'home_trailing' }] };
+  assert.equal(taskMonitoringComplete(targeted, [fixture(1, 'FT', 1, 2), fixture(2, '2H', 0, 0)]), true);
+
+  const allFixtures = { rules: [{ id: 'trailing', fixtureId: 'all', evaluateWhen: 'halftime', metric: 'home_trailing' }] };
+  assert.equal(taskMonitoringComplete(allFixtures, [fixture(1, 'FT', 1, 2), fixture(2, '2H', 0, 0)]), false);
+  assert.equal(taskMonitoringComplete(allFixtures, [fixture(1, 'FT', 1, 2), fixture(2, 'FT', 0, 0)]), true);
+});
+
+test('a completed home-trailing rule does not stop unrelated active rules', () => {
+  const task = { rules: [
+    { id: 'trailing', fixtureId: '1', evaluateWhen: 'halftime', metric: 'home_trailing' },
+    { id: 'goals', fixtureId: '2', evaluateWhen: 'in_play', metric: 'total_goals', operator: 'gt', threshold: 2 },
+  ] };
+  assert.equal(taskMonitoringComplete(task, [fixture(1, 'FT', 1, 2), fixture(2, '2H', 1, 1)]), false);
 });

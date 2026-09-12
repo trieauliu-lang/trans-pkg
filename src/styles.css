@@ -426,6 +426,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
 .alert-dialog h2 { margin: 5px 0 7px; font-family: var(--font-display); font-size: 27px; }
 .alert-dialog > p:not(.section-caption) { margin: 0 0 20px; color: var(--muted-bright); font-size: 11px; }
 .alert-dialog .button { width: 100%; }
+.alert-dialog__actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .api-key-dialog { width: min(500px, 100%); text-align: left; }
 .translation-dialog { width: min(450px, 100%); text-align: left; }
 .translation-dialog .field { margin-top: 13px; }
