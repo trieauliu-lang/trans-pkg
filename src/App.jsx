@@ -26,6 +26,13 @@ import {
   Zap,
 } from 'lucide-react';
 import { loadSavedAudio, saveAudio } from './audioStore.js';
+import {
+  fixtureSnapshotScope,
+  readFixtureSnapshot,
+  rememberFixtureScope,
+  removeFixtureSnapshot,
+  writeFixtureSnapshot,
+} from './fixtureSnapshot.js';
 
 const STATUS_META = {
   scheduled: { label: '等待启动', tone: 'scheduled' },
@@ -41,7 +48,6 @@ const METRIC_LABELS = { total_goals: '总进球数', goal_difference: '比分差
 const FINISHED = new Set(['FT', 'AET', 'PEN']);
 const DEFAULT_AUDIO_URL = '/default-alert.mp3';
 const DEFAULT_AUDIO_NAME = '刘欢 - 好汉歌';
-const FIXTURE_SNAPSHOT_KEY = 'matchPulse:fixtureSnapshot:v2';
 
 function compactFixture(fixture) {
   return {
@@ -63,45 +69,6 @@ function compactFixture(fixture) {
     },
     goals: fixture.goals,
   };
-}
-
-function readFixtureSnapshot() {
-  try {
-    const snapshot = JSON.parse(localStorage.getItem(FIXTURE_SNAPSHOT_KEY) || 'null');
-    if (snapshot && /^\d{4}-\d{2}-\d{2}$/.test(snapshot.date) && Array.isArray(snapshot.fixtures)) return snapshot;
-  } catch { /* Fall through to the legacy cache. */ }
-  try {
-    const fixtures = JSON.parse(localStorage.getItem('matchPulse:fixtures') || '[]');
-    if (!Array.isArray(fixtures) || !fixtures.length) return null;
-    const meta = JSON.parse(localStorage.getItem('matchPulse:fixtureMeta') || '{"cache":null,"quota":null}');
-    const date = localStorage.getItem('matchPulse:fixtureDate') || fixtures[0]?.fixture?.date?.slice(0, 10) || localDateValue();
-    return { date, fixtures, meta, queried: localStorage.getItem('matchPulse:hasQueried') === '1' };
-  } catch {
-    return null;
-  }
-}
-
-function writeFixtureSnapshot(date, fixtures, meta) {
-  try { localStorage.setItem('matchPulse:fixtureDate', date); } catch { /* The date is an optional convenience. */ }
-  try {
-    localStorage.setItem(FIXTURE_SNAPSHOT_KEY, JSON.stringify({
-      date,
-      fixtures: fixtures.map(compactFixture),
-      meta,
-      queried: true,
-      savedAt: new Date().toISOString(),
-    }));
-  } catch { /* Server cache remains available when browser storage is full or blocked. */ }
-}
-
-function clearFixtureSnapshot() {
-  try {
-    localStorage.removeItem(FIXTURE_SNAPSHOT_KEY);
-    localStorage.removeItem('matchPulse:fixtures');
-    localStorage.removeItem('matchPulse:fixtureMeta');
-    localStorage.removeItem('matchPulse:fixtureDate');
-    localStorage.setItem('matchPulse:hasQueried', '0');
-  } catch { /* Storage may be disabled. */ }
 }
 
 function createMonitorRule(overrides = {}) {
@@ -521,6 +488,7 @@ export default function App() {
 
   const activeTask = useMemo(() => tasks.find((task) => task.id === activeTaskId) || tasks[0] || null, [tasks, activeTaskId]);
   const activeApiKeyProfile = apiKeys.find((item) => item.active) || null;
+  const activeFixtureScope = fixtureSnapshotScope(health.activeApiKeyId, health.providerId);
   const runningCount = tasks.filter((task) => ['running', 'scheduled'].includes(task.status)).length;
   const visibleFixtures = useMemo(() => {
     const keyword = fixtureSearch.trim().toLocaleLowerCase();
@@ -571,7 +539,7 @@ export default function App() {
     setDrawerOpen(true);
   }
 
-  async function restoreCachedFixtures(value, { keepExisting = false } = {}) {
+  async function restoreCachedFixtures(value, { keepExisting = false, scope = activeFixtureScope } = {}) {
     const requestId = ++fixtureRestoreRequestRef.current;
     try {
       const response = await fetch(`/api/fixtures/cached?date=${value}&timezone=Asia/Shanghai`);
@@ -590,7 +558,8 @@ export default function App() {
       setFixtures(body.fixtures || []);
       setFixtureMeta(meta);
       setHasQueriedFixtures(true);
-      writeFixtureSnapshot(value, body.fixtures || [], meta);
+      writeFixtureSnapshot(scope, value, (body.fixtures || []).map(compactFixture), meta);
+      return true;
     } catch {
       if (!keepExisting && requestId === fixtureRestoreRequestRef.current) {
         setFixtures([]);
@@ -598,6 +567,7 @@ export default function App() {
         setHasQueriedFixtures(false);
       }
     }
+    return false;
   }
 
   async function loadFixtures() {
@@ -611,7 +581,7 @@ export default function App() {
       const meta = { cache: body.cache || null, quota: body.quota || null };
       setFixtureMeta(meta);
       setHasQueriedFixtures(true);
-      writeFixtureSnapshot(date, body.fixtures, meta);
+      writeFixtureSnapshot(activeFixtureScope, date, body.fixtures.map(compactFixture), meta);
       if (body.cache?.quotaProtected) showToast('每日额度已进入保留区，赛事列表暂用缓存；监控任务仍可查询');
       else if (body.cache?.stale) showToast('比分服务暂时不可用，当前显示最近一次缓存');
     } catch (error) {
@@ -630,15 +600,24 @@ export default function App() {
     restoreCachedFixtures(value);
   }
 
-  function acceptApiKeyState(body) {
+  async function acceptApiKeyState(body) {
+    const scope = fixtureSnapshotScope(body.activeApiKeyId, body.providerId);
+    const snapshot = readFixtureSnapshot(scope);
+    const hasSnapshot = snapshot?.date === date;
     setHealth(body);
     setApiKeys(body.apiKeys || []);
-    setFixtures([]);
     setSelectedIds([]);
-    setFixtureMeta({ cache: null, quota: null });
-    setHasQueriedFixtures(false);
-    ++fixtureRestoreRequestRef.current;
-    clearFixtureSnapshot();
+    rememberFixtureScope(scope);
+    if (hasSnapshot) {
+      setFixtures(snapshot.fixtures);
+      setFixtureMeta(snapshot.meta || { cache: null, quota: null });
+      setHasQueriedFixtures(Boolean(snapshot.queried));
+    } else {
+      setFixtures([]);
+      setFixtureMeta({ cache: null, quota: null });
+      setHasQueriedFixtures(false);
+    }
+    return Boolean(await restoreCachedFixtures(date, { keepExisting: hasSnapshot, scope }) || hasSnapshot);
   }
 
   async function openApiKeySettings() {
@@ -672,7 +651,7 @@ export default function App() {
       });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error || (editing ? 'API Key 设置更新失败' : 'API Key 导入失败'));
-      acceptApiKeyState(body);
+      await acceptApiKeyState(body);
       setEditingApiKeyId(null);
       setApiKeyValue('');
       setApiKeyLabel('');
@@ -707,7 +686,8 @@ export default function App() {
       const body = await response.json();
       if (!response.ok) throw new Error(body.error || 'API Key 删除失败');
       if (editingApiKeyId === item.id) cancelApiKeyEdit();
-      if (wasActive) acceptApiKeyState(body);
+      removeFixtureSnapshot(fixtureSnapshotScope(item.id, item.provider));
+      if (wasActive) await acceptApiKeyState(body);
       else {
         setHealth(body);
         setApiKeys(body.apiKeys || []);
@@ -727,8 +707,10 @@ export default function App() {
       const response = await fetch(`/api/settings/api-keys/${encodeURIComponent(id)}/activate`, { method: 'POST' });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error || 'API Key 切换失败');
-      acceptApiKeyState(body);
-      showToast(`已切换到 ${body.apiKeyHint}，请点击“查询比赛”验证`);
+      const restored = await acceptApiKeyState(body);
+      showToast(restored
+        ? `已切换到 ${body.apiKeyHint}，已恢复该 Key 的比赛缓存`
+        : `已切换到 ${body.apiKeyHint}，该 Key 暂无当前日期缓存`);
     } catch (error) {
       showToast(error.message);
     } finally {
@@ -856,17 +838,12 @@ export default function App() {
       fetch('/api/team-translations/known').then((response) => response.json()),
     ])
       .then(([healthBody, tasksBody, translationsBody]) => {
-        setHealth(healthBody);
-        setApiKeys(healthBody.apiKeys || []);
+        acceptApiKeyState(healthBody);
         usageWarningLevelsRef.current = Object.fromEntries((healthBody.apiKeys || []).map((item) => [item.id, item.usageLevel]));
         setTasks(tasksBody.tasks || []);
         setTeamTranslations(translationsBody.translations || {});
       })
       .catch(() => showToast('无法连接监控服务'));
-  }, []);
-
-  useEffect(() => {
-    restoreCachedFixtures(date, { keepExisting: Boolean(initialFixtureSnapshot?.fixtures?.length) });
   }, []);
 
   useEffect(() => {

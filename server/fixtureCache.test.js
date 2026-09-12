@@ -79,3 +79,21 @@ test('peek restores stale or fresh cache without calling the upstream loader', (
   assert.equal(cache.peek('missing'), null);
   assert.equal(calls, 0);
 });
+
+test('different API key cache entries remain independent', async () => {
+  let calls = 0;
+  const cache = createFixtureCache({ loader: async (key) => {
+    calls += 1;
+    return { data: [{ fixture: { id: key.startsWith('key-a|') ? 101 : 202 } }] };
+  } });
+  const firstKey = 'key-a|api-football|2026-09-12|Asia/Shanghai';
+  const secondKey = 'key-b|api-football|2026-09-12|Asia/Shanghai';
+
+  await cache.get(firstKey);
+  await cache.get(secondKey);
+
+  assert.equal(calls, 2);
+  assert.equal(cache.peek(firstKey).data[0].fixture.id, 101);
+  assert.equal(cache.peek(secondKey).data[0].fixture.id, 202);
+  assert.deepEqual(Object.keys(cache.snapshot()).sort(), [firstKey, secondKey].sort());
+});
