@@ -1,5 +1,17 @@
 export const FINISHED_STATUSES = new Set(['FT', 'AET', 'PEN']);
+export const TERMINAL_STATUSES = new Set(['FT', 'AET', 'PEN', 'CANC', 'ABD', 'AWD', 'WO', 'PST', 'SUSP']);
 export const HALFTIME_REACHED_STATUSES = new Set(['HT', '2H', 'ET', 'BT', 'P', 'FT', 'AET', 'PEN']);
+
+const TERMINAL_STATUS_LABELS = {
+  CANC: '比赛取消', ABD: '比赛腰斩', AWD: '裁定赛果', WO: '弃权', PST: '比赛延期', SUSP: '比赛暂停',
+};
+
+export function terminalTaskMessage(fixtures) {
+  const abnormal = fixtures.filter((fixture) => TERMINAL_STATUS_LABELS[fixture.fixture.status.short]);
+  if (!abnormal.length) return '所选比赛已全部结束，监控完成';
+  const details = abnormal.map((fixture) => `${fixture.teams.home.name} vs ${fixture.teams.away.name}：${TERMINAL_STATUS_LABELS[fixture.fixture.status.short]}`).join('；');
+  return `所选比赛均已终止，监控自动停止。${details}`;
+}
 
 export function compare(actual, operator, expected) {
   const operations = {

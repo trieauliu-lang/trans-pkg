@@ -17,6 +17,7 @@ const STATUS_MAP = {
   scheduled: 'NS', not_started: 'NS', live: 'LIVE', in_play: 'LIVE',
   half_time: 'HT', halftime: 'HT', finished: 'FT', completed: 'FT',
   postponed: 'PST', cancelled: 'CANC', canceled: 'CANC', abandoned: 'ABD', suspended: 'SUSP',
+  awarded: 'AWD', walkover: 'WO', walk_over: 'WO',
 };
 
 export function normalizeTheStatsMatch(match) {
@@ -59,6 +60,7 @@ const SPORTS_DB_STATUS_MAP = {
   POST: 'PST', POSTPONED: 'PST', 'MATCH POSTPONED': 'PST',
   CANCELLED: 'CANC', CANCELED: 'CANC', 'MATCH CANCELLED': 'CANC',
   ABANDONED: 'ABD', SUSPENDED: 'SUSP', INTERRUPTED: 'INT',
+  AWARDED: 'AWD', WALKOVER: 'WO', 'WALK OVER': 'WO',
 };
 
 function sportsDbDate(event) {

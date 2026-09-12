@@ -130,6 +130,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
 .api-state { color: var(--amber); background: var(--amber-soft); border-color: var(--amber-state-line); cursor: pointer; }
 .api-state:hover { filter: brightness(.98); }
 .api-state--live { color: var(--green); background: var(--green-soft); border-color: var(--green-line); }
+.api-state--warning { color: var(--amber); background: var(--amber-soft); border-color: var(--amber-line); }
 .api-state--error { color: var(--red); background: var(--red-soft); border-color: var(--red-line); }
 .sound-control { cursor: pointer; }
 .sound-control:hover { border-color: var(--line-strong); color: var(--ink); }
@@ -334,6 +335,10 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
 .metric-strip > div:last-child { border-right: 0; }
 .metric-strip span { display: flex; flex-direction: column; gap: 2px; font-size: 9px; }
 .metric-strip strong { color: var(--ink); font-size: 10px; }
+.task-key-binding { display: flex; align-items: center; gap: 7px; margin: -4px 0 14px; padding: 8px 10px; border: 1px solid var(--green-line); border-radius: 7px; background: var(--green-soft); color: var(--green); font-size: 9px; }
+.task-key-binding span { color: var(--muted); }
+.task-key-binding strong { margin-left: auto; font-size: 10px; }
+.task-key-binding--missing { border-color: var(--red-line); background: var(--red-soft); color: var(--red); }
 .monitor-beam { display: flex; justify-content: space-between; align-items: center; gap: 18px; padding: 12px 14px; border-left: 3px solid var(--muted); background: var(--panel-high); }
 .monitor-beam--running { border-color: var(--green); background: var(--green-soft); }
 .monitor-beam--scheduled { border-color: var(--amber); background: var(--amber-soft); }
@@ -350,6 +355,18 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
 .task-rule-item--fired { border-color: var(--green-line); background: var(--green-soft); }
 .task-rule-item--fired > span, .task-rule-item--fired em { color: var(--green); }
 .task-fixtures { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 13px; }
+.trigger-history { margin-top: 15px; padding-top: 14px; border-top: 1px solid var(--line); }
+.trigger-history__heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 9px; }
+.trigger-history__heading > div { display: flex; align-items: center; gap: 7px; }
+.trigger-history__heading strong { font-size: 12px; }
+.trigger-history__heading span { color: var(--muted); font-size: 9px; }
+.trigger-history__list { max-height: 280px; display: flex; flex-direction: column; gap: 6px; overflow-y: auto; }
+.trigger-history__item { display: grid; grid-template-columns: 28px minmax(0, 1fr); align-items: center; gap: 8px; padding: 9px 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel-high); }
+.trigger-history__item > span { width: 26px; height: 26px; display: grid; place-items: center; border-radius: 6px; background: var(--red-soft); color: var(--red); }
+.trigger-history__item > div { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.trigger-history__item strong { overflow: hidden; font-size: 10px; white-space: nowrap; text-overflow: ellipsis; }
+.trigger-history__item small { color: var(--muted); font-size: 9px; }
+.trigger-history__empty { margin: 0; padding: 13px; border-radius: 7px; background: var(--panel-high); color: var(--muted); font-size: 9px; text-align: center; }
 .error-banner { display: flex; gap: 10px; margin-top: 13px; padding: 12px; border: 1px solid var(--red-line); border-radius: 8px; color: var(--red); background: var(--red-soft); }
 .error-banner div { display: flex; flex-direction: column; gap: 3px; }
 .error-banner strong { font-size: 11px; }
@@ -395,6 +412,11 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
 .add-rule-button { width: 100%; height: 36px; display: flex; align-items: center; justify-content: center; gap: 6px; margin-top: 10px; border: 1px dashed var(--blue-line-strong); border-radius: 8px; background: var(--blue-soft); color: var(--blue); cursor: pointer; font-size: 10px; }
 .add-rule-button:disabled { cursor: not-allowed; opacity: .55; }
 .rule-list-note { margin: 8px 0 0; color: var(--muted); font-size: 9px; line-height: 1.6; }
+.reset-history-option { display: flex; align-items: flex-start; gap: 9px; margin: 15px 0 0; padding: 11px; border: 1px solid var(--amber-line); border-radius: 8px; background: var(--amber-soft); cursor: pointer; }
+.reset-history-option input { margin-top: 2px; }
+.reset-history-option span { display: flex; flex-direction: column; gap: 2px; }
+.reset-history-option strong { font-size: 10px; }
+.reset-history-option small { color: var(--amber-text); font-size: 9px; line-height: 1.5; }
 .task-drawer__actions { position: sticky; bottom: 0; display: grid; grid-template-columns: .7fr 1.3fr; gap: 8px; padding: 16px 0 0; background: var(--panel); }
 
 .alert-overlay { position: fixed; inset: 0; z-index: 80; display: grid; place-items: center; padding: 20px; background: var(--overlay); }
@@ -440,6 +462,10 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
 .api-usage-dashboard__heading h2 { margin: 2px 0 0; font-family: var(--font-display); font-size: 18px; }
 .api-usage-dashboard__grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
 .api-usage-history { min-width: 0; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-high); }
+.api-usage-history--warning { border-color: var(--amber-line); background: var(--amber-soft); }
+.api-usage-history--danger { border-color: var(--red-line); background: var(--red-soft); }
+.api-usage-history--warning > div small { color: var(--amber); }
+.api-usage-history--danger > div small { color: var(--red); }
 .api-usage-history > div { display: flex; justify-content: space-between; gap: 10px; margin-bottom: 9px; }
 .api-usage-history strong { overflow: hidden; font-size: 11px; white-space: nowrap; text-overflow: ellipsis; }
 .api-usage-history small { color: var(--muted); font-size: 8px; white-space: nowrap; }

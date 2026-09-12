@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { compare, evaluateTask, evaluateTaskRules } from './rules.js';
+import { compare, evaluateTask, evaluateTaskRules, terminalTaskMessage, TERMINAL_STATUSES } from './rules.js';
 
 const fixture = (id, status, home, away) => ({
   fixture: { id, status: { short: status } },
@@ -84,4 +84,10 @@ test('in-play rules wait until kickoff and can still catch a condition at full t
   const task = { rules: [{ id: 'goals', fixtureId: 'all', evaluateWhen: 'in_play', metric: 'total_goals', operator: 'gt', threshold: 2 }] };
   assert.equal(evaluateTaskRules(task, [fixture(1, 'NS', null, null)]).matches.length, 0);
   assert.equal(evaluateTaskRules(task, [fixture(1, 'FT', 2, 1)]).matches.length, 1);
+});
+
+test('cancelled, abandoned, awarded, walkover, postponed and suspended matches are terminal', () => {
+  ['CANC', 'ABD', 'AWD', 'WO', 'PST', 'SUSP'].forEach((status) => assert.equal(TERMINAL_STATUSES.has(status), true));
+  const cancelled = fixture(9, 'CANC', 0, 0);
+  assert.match(terminalTaskMessage([cancelled]), /比赛取消/);
 });

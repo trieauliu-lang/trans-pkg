@@ -4,8 +4,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
-  activateApiKey, addApiKey, getActiveApiKey, maskApiKey, normalizeApiKey,
-  publicApiKeySettings, readApiKeySettings, recordApiKeyRequest, removeApiKey, saveApiKeySettings, updateApiKeyProfile, updateApiKeyTest,
+  activateApiKey, addApiKey, getActiveApiKey, maskApiKey, normalizeApiKey, resolveTaskApiKey,
+  publicApiKeySettings, readApiKeySettings, recordApiKeyRequest, removeApiKey, saveApiKeySettings, updateApiKeyProfile, updateApiKeyQuota, updateApiKeyTest,
 } from './apiKeySettings.js';
 
 test('counts each upstream request per key and per Shanghai calendar day', () => {
@@ -35,6 +35,28 @@ test('persists request usage for an environment key without saving its secret', 
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }
+});
+
+test('uses provider quota to classify API key usage warnings', () => {
+  let settings = addApiKey({ apiKeys: [], activeApiKeyId: null }, 'quota-key', '额度测试');
+  settings = updateApiKeyQuota(settings, settings.activeApiKeyId, { limit: '100', remaining: '18' });
+  let profile = publicApiKeySettings(settings).apiKeys[0];
+  assert.equal(profile.providerUsed, 82);
+  assert.equal(profile.usagePercent, 82);
+  assert.equal(profile.usageLevel, 'warning');
+  settings = updateApiKeyQuota(settings, settings.activeApiKeyId, { limit: '100', remaining: '4' });
+  profile = publicApiKeySettings(settings).apiKeys[0];
+  assert.equal(profile.usageLevel, 'danger');
+});
+
+test('task API key binding stays fixed when the active key changes', () => {
+  let settings = addApiKey({ apiKeys: [], activeApiKeyId: null }, 'first-key', '第一组');
+  const fixedId = settings.activeApiKeyId;
+  settings = addApiKey(settings, 'second-key', '第二组');
+  assert.notEqual(settings.activeApiKeyId, fixedId);
+  assert.equal(resolveTaskApiKey(settings, { apiKeyId: fixedId }).id, fixedId);
+  const removed = removeApiKey(settings, fixedId);
+  assert.equal(resolveTaskApiKey(removed, { apiKeyId: fixedId }), null);
 });
 
 test('normalizes and masks an API key without exposing it', () => {

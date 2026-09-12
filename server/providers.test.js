@@ -14,6 +14,11 @@ test('normalizes TheStatsAPI fixture variants to the shared format', () => {
   assert.equal(fixture.league.name, 'Premier League');
 });
 
+test('normalizes abnormal terminal statuses across providers', () => {
+  assert.equal(normalizeTheStatsMatch({ id: 1, date: '2026-09-11', status: 'awarded', home: {}, away: {} }).fixture.status.short, 'AWD');
+  assert.equal(normalizeTheSportsDbEvent({ idEvent: 2, dateEvent: '2026-09-11', strStatus: 'Walk Over' }).fixture.status.short, 'WO');
+});
+
 test('TheStatsAPI uses bearer auth, date filters and pagination', async () => {
   const calls = [];
   let tracked = 0;

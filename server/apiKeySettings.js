@@ -85,7 +85,13 @@ export function readApiKeySettings(file, environmentValue = '') {
     if (!apiKeys.some((item) => item.provider === 'api-football' && item.key === environmentKey)) {
       const record = keyRecord(environmentKey, '环境变量 API', 'api-football', 'environment');
       const persistedUsage = stored.apiKeyUsage?.[record.id];
-      apiKeys.push(persistedUsage ? { ...record, usageByDate: persistedUsage.usageByDate || {}, lastRequestAt: persistedUsage.lastRequestAt || null } : record);
+      apiKeys.push(persistedUsage ? {
+        ...record,
+        usageByDate: persistedUsage.usageByDate || {},
+        lastRequestAt: persistedUsage.lastRequestAt || null,
+        latestQuota: persistedUsage.latestQuota || null,
+        quotaUpdatedAt: persistedUsage.quotaUpdatedAt || null,
+      } : record);
     }
   } catch { /* Environment key is optional. */ }
 
@@ -159,6 +165,12 @@ export function getApiKey(settings, id) {
   return settings.apiKeys.find((item) => item.id === id) || null;
 }
 
+export function resolveTaskApiKey(settings, task) {
+  if (task.apiKeyId) return getApiKey(settings, task.apiKeyId);
+  return settings.apiKeys.find((item) => item.provider === task.providerId)
+    || getApiKey(settings, settings.activeApiKeyId);
+}
+
 export function updateApiKeyTest(settings, id, { status, message, quota = null, testedAt = new Date().toISOString() }) {
   if (!['healthy', 'error'].includes(status)) throw new Error('API Key 测试状态不正确');
   if (!getApiKey(settings, id)) throw new Error('API Key 不存在');
@@ -170,7 +182,16 @@ export function updateApiKeyTest(settings, id, { status, message, quota = null, 
       testMessage: String(message || '').slice(0, 240),
       testedAt,
       testQuota: quota,
+      ...(quota && (quota.limit != null || quota.remaining != null) ? { latestQuota: quota, quotaUpdatedAt: testedAt } : {}),
     } : item),
+  };
+}
+
+export function updateApiKeyQuota(settings, id, quota, updatedAt = new Date().toISOString()) {
+  if (!getApiKey(settings, id) || !quota || (quota.limit == null && quota.remaining == null)) return settings;
+  return {
+    ...settings,
+    apiKeys: settings.apiKeys.map((item) => item.id === id ? { ...item, latestQuota: quota, quotaUpdatedAt: updatedAt } : item),
   };
 }
 
@@ -178,17 +199,26 @@ export function publicApiKeySettings(settings) {
   const today = usageDate();
   return {
     activeApiKeyId: settings.activeApiKeyId,
-    apiKeys: settings.apiKeys.map(({ id, label, key, source, provider, createdAt, lastUsedAt, lastRequestAt, usageByDate, testStatus, testMessage, testedAt, testQuota }) => ({
-      id, label, hint: maskApiKey(key), source, provider: provider || 'api-football', createdAt, lastUsedAt,
-      lastRequestAt: lastRequestAt || null,
-      todayUsage: usageByDate?.[today] || { total: 0, fixtures: 0, tests: 0 },
-      usageHistory: Object.entries(usageByDate || {})
-        .sort(([left], [right]) => right.localeCompare(left))
-        .slice(0, 31)
-        .map(([date, usage]) => ({ date, total: Number(usage.total || 0), fixtures: Number(usage.fixtures || 0), tests: Number(usage.tests || 0) })),
-      testStatus: testStatus || 'untested', testMessage: testMessage || '', testedAt: testedAt || null,
-      testQuota: testQuota || null, active: id === settings.activeApiKeyId,
-    })),
+    apiKeys: settings.apiKeys.map(({ id, label, key, source, provider, createdAt, lastUsedAt, lastRequestAt, usageByDate, testStatus, testMessage, testedAt, testQuota, latestQuota, quotaUpdatedAt }) => {
+      const todayUsage = usageByDate?.[today] || { total: 0, fixtures: 0, tests: 0 };
+      const quota = latestQuota || testQuota || null;
+      const limit = quota?.limit != null ? Number(quota.limit) : Number.NaN;
+      const remaining = quota?.remaining != null ? Number(quota.remaining) : Number.NaN;
+      const providerUsed = Number.isFinite(limit) && Number.isFinite(remaining) ? Math.max(0, limit - remaining) : null;
+      const usagePercent = Number.isFinite(limit) && limit > 0 ? Math.min(100, Math.round(100 * (providerUsed ?? todayUsage.total) / limit)) : null;
+      const usageLevel = usagePercent >= 95 ? 'danger' : usagePercent >= 80 ? 'warning' : 'normal';
+      return {
+        id, label, hint: maskApiKey(key), source, provider: provider || 'api-football', createdAt, lastUsedAt,
+        lastRequestAt: lastRequestAt || null, todayUsage, latestQuota: quota, quotaUpdatedAt: quotaUpdatedAt || testedAt || null,
+        providerUsed, usagePercent, usageLevel,
+        usageHistory: Object.entries(usageByDate || {})
+          .sort(([left], [right]) => right.localeCompare(left))
+          .slice(0, 31)
+          .map(([date, usage]) => ({ date, total: Number(usage.total || 0), fixtures: Number(usage.fixtures || 0), tests: Number(usage.tests || 0) })),
+        testStatus: testStatus || 'untested', testMessage: testMessage || '', testedAt: testedAt || null,
+        testQuota: testQuota || null, active: id === settings.activeApiKeyId,
+      };
+    }),
   };
 }
 
@@ -197,10 +227,12 @@ export function saveApiKeySettings(file, settings) {
   const temporaryFile = `${file}.tmp`;
   const apiKeys = settings.apiKeys
     .filter((item) => item.source !== 'environment')
-    .map(({ id, label, key, provider, createdAt, lastUsedAt, lastRequestAt, usageByDate, testStatus, testMessage, testedAt, testQuota }) => ({
-      id, label, key, provider, createdAt, lastUsedAt, lastRequestAt, usageByDate, testStatus, testMessage, testedAt, testQuota,
+    .map(({ id, label, key, provider, createdAt, lastUsedAt, lastRequestAt, usageByDate, testStatus, testMessage, testedAt, testQuota, latestQuota, quotaUpdatedAt }) => ({
+      id, label, key, provider, createdAt, lastUsedAt, lastRequestAt, usageByDate, testStatus, testMessage, testedAt, testQuota, latestQuota, quotaUpdatedAt,
     }));
-  const apiKeyUsage = Object.fromEntries(settings.apiKeys.map(({ id, usageByDate, lastRequestAt }) => [id, { usageByDate: usageByDate || {}, lastRequestAt: lastRequestAt || null }]));
+  const apiKeyUsage = Object.fromEntries(settings.apiKeys.map(({ id, usageByDate, lastRequestAt, latestQuota, quotaUpdatedAt }) => [id, {
+    usageByDate: usageByDate || {}, lastRequestAt: lastRequestAt || null, latestQuota: latestQuota || null, quotaUpdatedAt: quotaUpdatedAt || null,
+  }]));
   fs.writeFileSync(temporaryFile, JSON.stringify({ apiKeys, apiKeyUsage, activeApiKeyId: settings.activeApiKeyId }, null, 2), { mode: 0o600 });
   fs.renameSync(temporaryFile, file);
 }

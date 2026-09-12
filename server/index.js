@@ -3,13 +3,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import crypto from 'node:crypto';
-import { evaluateTaskRules, FINISHED_STATUSES } from './rules.js';
+import { evaluateTaskRules, terminalTaskMessage, TERMINAL_STATUSES } from './rules.js';
 import { retryDelay } from './footballClient.js';
 import { createFixtureCache } from './fixtureCache.js';
 import { createProviderClient, PROVIDERS } from './providers.js';
 import {
-  activateApiKey, addApiKey, getActiveApiKey, getApiKey, maskApiKey,
-  publicApiKeySettings, readApiKeySettings, recordApiKeyRequest, removeApiKey, saveApiKeySettings, updateApiKeyProfile, updateApiKeyTest,
+  activateApiKey, addApiKey, getActiveApiKey, getApiKey, maskApiKey, resolveTaskApiKey,
+  publicApiKeySettings, readApiKeySettings, recordApiKeyRequest, removeApiKey, saveApiKeySettings, updateApiKeyProfile, updateApiKeyQuota, updateApiKeyTest,
 } from './apiKeySettings.js';
 import { getKnownTeamTranslations, removeManualTeamTranslation, saveManualTeamTranslation, translateTeamNames } from './teamTranslations.js';
 import { normalizeTaskSettings, validateTask } from './taskSettings.js';
@@ -96,7 +96,11 @@ function buildFixtureCache(initial = readFixtureCache()) {
       const [keyId, providerId, date, timezone] = key.split('|');
       const profile = getApiKey(apiKeySettings, keyId);
       if (!profile || profile.provider !== providerId) throw new Error('任务绑定的 API Key 不存在');
-      return createProviderClient({ providerId, apiKey: profile.key, onRequest: requestTracker(profile, 'fixtures') }).fetchFixtures(date, timezone);
+      const result = await createProviderClient({ providerId, apiKey: profile.key, onRequest: requestTracker(profile, 'fixtures') }).fetchFixtures(date, timezone);
+      apiKeySettings = updateApiKeyQuota(apiKeySettings, profile.id, result.quota);
+      saveApiKeySettings(settingsFile, apiKeySettings);
+      broadcast('api-usage', apiKeyPayload());
+      return result;
     },
   });
 }
@@ -128,19 +132,6 @@ function healthPayload() {
 
 function applyActiveApiKey() {
   apiKey = getActiveApiKey(apiKeySettings);
-  const activeProfile = getApiKey(apiKeySettings, apiKeySettings.activeApiKeyId);
-  tasks.forEach((task) => {
-    if (activeProfile && task.providerId === activeProfile.provider) task.apiKeyId = activeProfile.id;
-    if (task.status !== 'error') return;
-    task.revision = (task.revision || 0) + 1;
-    task.status = 'running';
-    task.nextCheckAt = new Date().toISOString();
-    task.error = null;
-    task.errorCode = null;
-    task.lastMessage = 'API Key 已切换，等待重新检查';
-  });
-  saveTasks();
-  broadcast('tasks-updated', tasks);
 }
 
 function apiKeyPayload() {
@@ -166,12 +157,21 @@ async function getTaskFixtures(task) {
 
   const selectedIds = new Set(task.fixtures.map((item) => String(item.fixture.id)));
   const monitorDate = task.monitorDate || task.fixtures[0]?.fixture?.date?.slice(0, 10);
-  const profile = getApiKey(apiKeySettings, task.apiKeyId)
-    || apiKeySettings.apiKeys.find((item) => item.provider === task.providerId)
-    || getApiKey(apiKeySettings, apiKeySettings.activeApiKeyId);
+  let profile = resolveTaskApiKey(apiKeySettings, task);
+  if (task.apiKeyId && !profile) {
+    const error = new Error('任务绑定的 API Key 已删除，请编辑任务并重新选择 Key');
+    error.code = 'API_KEY_REMOVED';
+    throw error;
+  }
+  if (profile && !task.apiKeyId) {
+    task.apiKeyId = profile.id;
+    task.providerId = profile.provider;
+  }
   if (!profile) throw new Error('任务所需的 API 平台尚未配置 Key');
   const result = await fixtureCache.get(fixtureCacheKey(profile, monitorDate));
-  const fixtures = result.data.filter((item) => selectedIds.has(String(item.fixture.id)));
+  const returned = new Map(result.data.filter((item) => selectedIds.has(String(item.fixture.id))).map((item) => [String(item.fixture.id), item]));
+  const fixtures = task.fixtures.map((previous) => returned.get(String(previous.fixture.id))
+    || (TERMINAL_STATUSES.has(previous.fixture.status.short) ? previous : null)).filter(Boolean);
   if (fixtures.length !== selectedIds.size) {
     throw new Error(`API 未返回全部所选比赛（${fixtures.length}/${selectedIds.size}），将在下次继续检查`);
   }
@@ -206,11 +206,11 @@ async function runTask(task) {
       task.triggeredAt = now;
       task.triggerFixtureId = result.matches[0].fixtureId;
     }
-    const allFinished = fixtures.every((fixture) => FINISHED_STATUSES.has(fixture.fixture.status.short));
-    if (allFinished) {
+    const allTerminal = fixtures.every((fixture) => TERMINAL_STATUSES.has(fixture.fixture.status.short));
+    if (allTerminal) {
       task.status = 'stopped';
       task.nextCheckAt = null;
-      if (!result.matches.length) task.lastMessage = '所选比赛已全部结束，监控完成';
+      if (!result.matches.length) task.lastMessage = terminalTaskMessage(fixtures);
     } else {
       task.status = 'running';
       task.nextCheckAt = new Date(Date.now() + task.intervalMinutes * 60_000).toISOString();
@@ -218,13 +218,14 @@ async function runTask(task) {
     if (result.matches.length) broadcast('task-triggered', { ...task, triggerEvents: result.matches });
   } catch (error) {
     if (!isCurrent()) return;
-    task.status = 'error';
+    const bindingRemoved = error.code === 'API_KEY_REMOVED';
+    task.status = bindingRemoved ? 'stopped' : 'error';
     task.error = error.message;
     task.errorCode = error.code || 'FIXTURES';
     task.consecutiveFailures = (task.consecutiveFailures || 0) + 1;
-    task.lastMessage = '本轮未获取到最新比分，等待自动重试';
+    task.lastMessage = bindingRemoved ? error.message : '本轮未获取到最新比分，等待自动重试';
     task.lastCheckedAt = now;
-    task.nextCheckAt = new Date(Date.now() + retryDelay(task.intervalMinutes, task.consecutiveFailures, error.retryAfterMs)).toISOString();
+    task.nextCheckAt = bindingRemoved ? null : new Date(Date.now() + retryDelay(task.intervalMinutes, task.consecutiveFailures, error.retryAfterMs)).toISOString();
     broadcast('task-error', task);
   }
   saveTasks();
@@ -290,8 +291,20 @@ app.delete('/api/settings/api-keys/:id', (request, response) => {
   try {
     const wasActive = request.params.id === apiKeySettings.activeApiKeyId;
     apiKeySettings = removeApiKey(apiKeySettings, request.params.id);
+    tasks.forEach((task) => {
+      if (task.apiKeyId !== request.params.id) return;
+      task.revision = (task.revision || 0) + 1;
+      task.status = 'stopped';
+      task.nextCheckAt = null;
+      task.errorCode = 'API_KEY_REMOVED';
+      task.error = '任务绑定的 API Key 已删除';
+      task.lastMessage = '任务绑定的 API Key 已删除，请编辑任务并重新选择 Key';
+      delete task.checking;
+    });
     saveApiKeySettings(settingsFile, apiKeySettings);
     if (wasActive) applyActiveApiKey();
+    saveTasks();
+    broadcast('tasks-updated', tasks);
     response.json(apiKeyPayload());
   } catch (error) {
     response.status(error.message === 'API Key 不存在' ? 404 : 400).json({ error: error.message });
@@ -422,7 +435,8 @@ app.post('/api/tasks', (request, response) => {
   const error = validateTask(request.body);
   if (error) return response.status(400).json({ error });
   const settings = normalizeTaskSettings(request.body);
-  const activeProfile = getApiKey(apiKeySettings, apiKeySettings.activeApiKeyId);
+  const activeProfile = getApiKey(apiKeySettings, request.body?.apiKeyId || apiKeySettings.activeApiKeyId);
+  if (apiKey && !activeProfile) return response.status(400).json({ error: '请选择有效的任务 API Key' });
   const task = {
     id: crypto.randomUUID(),
     ...settings,
@@ -453,19 +467,24 @@ app.put('/api/tasks/:id', (request, response) => {
   if (error) return response.status(400).json({ error });
 
   const settings = normalizeTaskSettings(request.body);
+  const selectedProfile = getApiKey(apiKeySettings, request.body?.apiKeyId || task.apiKeyId);
+  if (apiKey && !selectedProfile) return response.status(400).json({ error: '请选择有效的任务 API Key' });
+  const resetHistory = Boolean(request.body?.resetHistory);
   task.revision = (task.revision || 0) + 1;
   Object.assign(task, settings, {
+    providerId: selectedProfile?.provider || null,
+    apiKeyId: selectedProfile?.id || null,
     consecutiveFailures: 0,
     errorCode: null,
     lastSucceededAt: null,
     status: Date.parse(settings.startAt) > Date.now() ? 'scheduled' : 'running',
     nextCheckAt: settings.startAt,
     lastCheckedAt: null,
-    triggeredAt: null,
-    triggerFixtureId: null,
-    triggeredRuleKeys: [],
-    triggerHistory: [],
-    triggerCount: 0,
+    triggeredAt: resetHistory ? null : task.triggeredAt,
+    triggerFixtureId: resetHistory ? null : task.triggerFixtureId,
+    triggeredRuleKeys: resetHistory ? [] : (task.triggeredRuleKeys || []),
+    triggerHistory: resetHistory ? [] : (task.triggerHistory || []),
+    triggerCount: resetHistory ? 0 : (task.triggerCount || 0),
     lastMessage: '设置已更新，等待首次检查',
     error: null,
   });
