@@ -27,6 +27,16 @@ export function unreadReminderCount(task) {
   }).length;
 }
 
+export function translatedReminderMessage(message, fixtures = [], translations = {}) {
+  return (fixtures || []).reduce((translatedMessage, fixture) => {
+    return [fixture?.teams?.home, fixture?.teams?.away].reduce((text, team) => {
+      const original = team?.name;
+      const translated = translations[original] || team?.zhName;
+      return original && translated && translated !== original ? text.replaceAll(original, translated) : text;
+    }, translatedMessage);
+  }, String(message || ''));
+}
+
 export function groupedReminderHistory(tasks) {
   const events = (tasks || []).flatMap((task) => {
     const acknowledgedAt = Date.parse(task.lastAcknowledgedTriggerAt || 0) || 0;

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { groupedReminderHistory, latestReminderAt, reminderDayKey, unreadReminderCount } from '../src/reminderHistory.js';
+import { groupedReminderHistory, latestReminderAt, reminderDayKey, translatedReminderMessage, unreadReminderCount } from '../src/reminderHistory.js';
 
 const tasks = [{
   id: 'task-a',
@@ -29,4 +29,12 @@ test('groups all task reminders by Shanghai calendar day and sorts newest first'
   assert.deepEqual(groups[0].reminders.map((event) => event.taskId), ['task-b', 'task-a']);
   assert.deepEqual(groups[0].reminders.map((event) => event.unread), [true, true]);
   assert.equal(groups.flatMap((group) => group.reminders).length, 3);
+});
+
+test('uses current Chinese team translations for existing reminder messages', () => {
+  const fixtures = [{ teams: { home: { name: 'Arsenal' }, away: { name: 'Chelsea', zhName: '切尔西' } } }];
+  assert.equal(
+    translatedReminderMessage('Arsenal 2:1 Chelsea 已满足条件', fixtures, { Arsenal: '阿森纳' }),
+    '阿森纳 2:1 切尔西 已满足条件',
+  );
 });
