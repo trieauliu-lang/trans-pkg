@@ -424,7 +424,6 @@ function TaskDetail({ task, translations, apiKeys = [], onAction, onEdit }) {
       <div className="metric-strip">
         <div><Clock3 size={18} /><span>开始时间<strong>{formatDateTime(task.startAt)}</strong></span></div>
         <div><RefreshCw size={18} /><span>监控频次<strong>{task.intervalMinutes} 分钟</strong></span></div>
-        <div><Activity size={18} /><span>实际 API 消耗<strong>{task.requestCount} 次</strong></span></div>
         <div><AlarmClock size={18} /><span>{task.status === 'scheduled' ? '计划启动' : '下次检查'}<strong>{formatDateTime(task.status === 'scheduled' ? task.startAt : task.nextCheckAt)}</strong></span></div>
       </div>
 
@@ -1074,7 +1073,7 @@ export default function App() {
           </div>
         </section>}
 
-        {activePage === 'monitor' && apiKeys.length > 0 && <section className="api-usage-dashboard"><div className="api-usage-dashboard__heading"><div><p className="section-caption">API 用量</p><h2>最近 7 天请求统计</h2></div><button className="button button--secondary button--small" onClick={openApiKeySettings}><KeyRound size={15} />管理 Key</button></div><div className="api-usage-dashboard__grid">{apiKeys.map((item) => <ApiUsageHistory key={item.id} item={item} />)}</div></section>}
+        {activePage === 'monitor' && apiKeys.length > 0 && <section className="api-usage-dashboard"><div className="api-usage-dashboard__heading"><div><p className="section-caption">统一 API 用量</p><h2>今日真实请求 {apiKeys.reduce((total, item) => total + Number(item.todayUsage?.total || 0), 0)} 次</h2></div><button className="button button--secondary button--small" onClick={openApiKeySettings}><KeyRound size={15} />管理 Key</button></div><div className="api-usage-dashboard__grid">{apiKeys.map((item) => <ApiUsageHistory key={item.id} item={item} />)}</div></section>}
         {activePage === 'monitor' && (activeTask ? <TaskDetail task={activeTask} translations={teamTranslations} apiKeys={apiKeys} onAction={taskAction} onEdit={beginEditTask} /> : <EmptyState onCreate={() => navigatePage('fixtures')} />)}
       </main>
 

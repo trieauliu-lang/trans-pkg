@@ -59,7 +59,7 @@ function demoFixtures(date) {
 
 function readTasks() {
   try {
-    return JSON.parse(fs.readFileSync(tasksFile, 'utf8')).map(({ checking: _checking, ...task }) => ({
+    return JSON.parse(fs.readFileSync(tasksFile, 'utf8')).map(({ checking: _checking, requestCount: _requestCount, ...task }) => ({
       ...task,
       intervalMinutes: normalizeMonitorInterval(task.intervalMinutes),
     }));
@@ -189,7 +189,6 @@ async function runTask(task) {
     const fixtureResult = await getTaskFixtures(task);
     const { fixtures } = fixtureResult;
     if (!isCurrent()) return;
-    if (fixtureResult.source === 'api') task.requestCount += 1;
     const result = evaluateTaskRules(task, fixtures, task.triggeredRuleKeys || []);
     task.fixtures = fixtures;
     task.lastCheckedAt = now;
@@ -452,7 +451,6 @@ app.post('/api/tasks', (request, response) => {
     createdAt: new Date().toISOString(),
     lastCheckedAt: null,
     triggeredAt: null,
-    requestCount: 0,
     triggeredRuleKeys: [],
     triggerHistory: [],
     triggerCount: 0,
