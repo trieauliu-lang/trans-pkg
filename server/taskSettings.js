@@ -1,7 +1,19 @@
+export const MIN_MONITOR_INTERVAL_MINUTES = 5;
+
+export function normalizeMonitorInterval(value) {
+  const interval = Number(value);
+  return Number.isFinite(interval) ? Math.max(MIN_MONITOR_INTERVAL_MINUTES, interval) : MIN_MONITOR_INTERVAL_MINUTES;
+}
+
+export function nextMonitorCheckAt(intervalMinutes, now = Date.now()) {
+  const intervalMs = normalizeMonitorInterval(intervalMinutes) * 60_000;
+  return new Date(Math.ceil((now + 1) / intervalMs) * intervalMs).toISOString();
+}
+
 export function validateTask(input) {
   if (!input.name?.trim()) return '请输入任务名称';
   if (!Array.isArray(input.fixtures) || input.fixtures.length === 0) return '请至少选择一场比赛';
-  if (!Number.isFinite(Number(input.intervalMinutes)) || Number(input.intervalMinutes) < 1) return '监控频次不能小于 1 分钟';
+  if (!Number.isFinite(Number(input.intervalMinutes)) || Number(input.intervalMinutes) < MIN_MONITOR_INTERVAL_MINUTES) return '监控频次不能小于 5 分钟';
   if (Array.isArray(input.rules)) {
     if (!input.rules.length) return '请至少添加一个监控指标';
     if (input.rules.length > 20) return '单个任务最多添加 20 个监控指标';
@@ -48,7 +60,7 @@ export function normalizeTaskSettings(input, now = new Date()) {
     name: input.name.trim(),
     monitorDate: input.monitorDate || input.fixtures[0]?.fixture?.date?.slice(0, 10),
     fixtures: input.fixtures,
-    intervalMinutes: Number(input.intervalMinutes),
+    intervalMinutes: normalizeMonitorInterval(input.intervalMinutes),
     startAt,
     rules,
     evaluateWhen: firstRule.evaluateWhen,

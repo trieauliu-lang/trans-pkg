@@ -284,7 +284,7 @@ function CreateTaskPanel({ fixtures, selectedIds, setSelectedIds, monitorDate, t
     name: '今晚比分提醒',
     startMode: 'scheduled',
     startAt: defaultStartAt(monitorDate, selectedFixtures),
-    intervalMinutes: 3,
+    intervalMinutes: 5,
     apiKeyId: fallbackApiKeyId,
     rules: [createMonitorRule()],
     resetHistory: false,
@@ -363,8 +363,9 @@ function CreateTaskPanel({ fixtures, selectedIds, setSelectedIds, monitorDate, t
               <button type="button" className={form.startMode === 'scheduled' ? 'is-active' : ''} onClick={() => update('startMode', 'scheduled')}>定时开始</button>
             </div>
             {form.startMode === 'scheduled' && <label className="field"><span>开始时间 · Asia/Shanghai</span><input type="datetime-local" value={form.startAt} onChange={(event) => update('startAt', event.target.value)} /></label>}
-            <label className="field"><span>监控频次</span><div className="input-unit"><input type="number" min="1" max="1440" value={form.intervalMinutes} onChange={(event) => update('intervalMinutes', event.target.value)} /><em>分钟 / 次</em></div></label>
-            <div className="quick-values">{[1, 3, 5, 10].map((value) => <button type="button" key={value} className={Number(form.intervalMinutes) === value ? 'is-active' : ''} onClick={() => update('intervalMinutes', value)}>{value} 分钟</button>)}</div>
+            <label className="field"><span>共享监控频次</span><div className="input-unit"><input type="number" min="5" max="1440" value={form.intervalMinutes} onChange={(event) => update('intervalMinutes', event.target.value)} /><em>分钟 / 次</em></div></label>
+            <div className="quick-values">{[5, 10, 15, 30].map((value) => <button type="button" key={value} className={Number(form.intervalMinutes) === value ? 'is-active' : ''} onClick={() => update('intervalMinutes', value)}>{value} 分钟</button>)}</div>
+            <p className="rule-list-note">同一 API Key、平台和比赛日期的任务共享比分刷新；默认 5 分钟，同一轮只消耗一次上游请求。</p>
           </section>
 
           <section className="form-section">

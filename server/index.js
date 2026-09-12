@@ -12,7 +12,7 @@ import {
   publicApiKeySettings, readApiKeySettings, recordApiKeyRequest, removeApiKey, saveApiKeySettings, updateApiKeyProfile, updateApiKeyQuota, updateApiKeyTest,
 } from './apiKeySettings.js';
 import { getKnownTeamTranslations, removeManualTeamTranslation, saveManualTeamTranslation, translateTeamNames } from './teamTranslations.js';
-import { normalizeTaskSettings, validateTask } from './taskSettings.js';
+import { nextMonitorCheckAt, normalizeMonitorInterval, normalizeTaskSettings, validateTask } from './taskSettings.js';
 
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -25,7 +25,7 @@ const port = Number(process.env.PORT || 8787);
 const environmentApiKey = process.env.API_FOOTBALL_KEY || '';
 let apiKeySettings = readApiKeySettings(settingsFile, environmentApiKey);
 let apiKey = getActiveApiKey(apiKeySettings);
-const liveCacheSeconds = Math.max(60, Number(process.env.API_FOOTBALL_LIVE_CACHE_SECONDS) || 300);
+const liveCacheSeconds = Math.max(300, Number(process.env.API_FOOTBALL_LIVE_CACHE_SECONDS) || 300);
 const quotaReserve = Math.max(0, Number(process.env.API_FOOTBALL_QUOTA_RESERVE) || 10);
 const app = express();
 const clients = new Set();
@@ -59,7 +59,10 @@ function demoFixtures(date) {
 
 function readTasks() {
   try {
-    return JSON.parse(fs.readFileSync(tasksFile, 'utf8')).map(({ checking: _checking, ...task }) => task);
+    return JSON.parse(fs.readFileSync(tasksFile, 'utf8')).map(({ checking: _checking, ...task }) => ({
+      ...task,
+      intervalMinutes: normalizeMonitorInterval(task.intervalMinutes),
+    }));
   } catch {
     return [];
   }
@@ -215,7 +218,7 @@ async function runTask(task) {
         : '主队落后监控的比赛已结束，任务自动停止';
     } else {
       task.status = 'running';
-      task.nextCheckAt = new Date(Date.now() + task.intervalMinutes * 60_000).toISOString();
+      task.nextCheckAt = nextMonitorCheckAt(task.intervalMinutes);
     }
     if (result.matches.length) broadcast('task-triggered', { ...task, triggerEvents: result.matches });
   } catch (error) {
