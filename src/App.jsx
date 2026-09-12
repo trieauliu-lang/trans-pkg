@@ -253,9 +253,12 @@ function MatchCard({ fixture, selected, onToggle, onTranslate, compact = false, 
 function ApiUsageHistory({ item }) {
   if (!item) return null;
   const history = (item.usageHistory || []).slice(0, 7);
+  const remaining = item.latestQuota?.remaining;
+  const lowRemaining = remaining != null && Number(remaining) < 25;
   return (
     <section className={`api-usage-history api-usage-history--${item.usageLevel || 'normal'}`}>
-      <div><strong>{item.label} · 最近每日用量</strong><small>{item.usagePercent != null ? `平台额度已用 ${item.usagePercent}%${item.latestQuota?.remaining != null ? ` · 剩余 ${item.latestQuota.remaining}` : ''}` : '按北京时间统计真实上游请求'}</small></div>
+      <div><strong>{item.label} · 最近每日用量</strong><small>{item.usagePercent != null ? `平台额度已用 ${item.usagePercent}%` : '按北京时间统计真实上游请求'}</small></div>
+      {remaining != null && <div className={`api-usage-remaining ${lowRemaining ? 'api-usage-remaining--low' : ''}`}><span>今日剩余额度</span><strong>{remaining}</strong>{item.latestQuota?.limit != null && <em>/ {item.latestQuota.limit}</em>}<small>{lowRemaining ? '不足 25 次，任务频次已强制调整为 10 分钟' : '额度充足'}</small></div>}
       {history.length ? <table><thead><tr><th>日期</th><th>总请求</th><th>比赛</th><th>测试</th></tr></thead><tbody>{history.map((usage) => <tr key={usage.date}><td>{usage.date}</td><td>{usage.total}</td><td>{usage.fixtures}</td><td>{usage.tests}</td></tr>)}</tbody></table> : <p>这个 Key 暂无请求记录。</p>}
     </section>
   );
@@ -267,7 +270,7 @@ function TaskListItem({ task, active, unreadCount = 0, onClick }) {
       <span className="task-item__icon">{unreadCount ? <BellRing size={16} /> : <Radio size={16} />}{unreadCount > 0 && <i>{unreadCount > 99 ? '99+' : unreadCount}</i>}</span>
       <span className="task-item__copy">
         <strong>{task.name}</strong>
-        <small>{task.fixtures.length} 场 · {task.quotaThrottled ? `${task.effectiveIntervalMinutes} 分钟（额度保护）` : `${task.intervalMinutes} 分钟`}</small>
+        <small>{task.fixtures.length} 场 · {task.intervalMinutes} 分钟{task.quotaFrequencyAdjustedAt ? '（额度保护已调整）' : ''}</small>
       </span>
       <StatusPill status={task.status} />
     </button>
@@ -454,7 +457,7 @@ function TaskDetail({ task, translations, apiKeys = [], onAction, onEdit }) {
 
       <div className="metric-strip">
         <div><Clock3 size={18} /><span>开始时间<strong>{formatDateTime(task.startAt)}</strong></span></div>
-        <div><RefreshCw size={18} /><span>监控频次<strong>{task.quotaThrottled ? `${task.effectiveIntervalMinutes} 分钟 · 额度保护` : `${task.intervalMinutes} 分钟`}</strong></span></div>
+        <div><RefreshCw size={18} /><span>监控频次<strong>{task.intervalMinutes} 分钟{task.quotaFrequencyAdjustedAt ? ' · 额度保护已调整' : ''}</strong></span></div>
         <div><AlarmClock size={18} /><span>{task.status === 'scheduled' ? '计划启动' : '下次检查'}<strong>{formatDateTime(task.status === 'scheduled' ? task.startAt : task.nextCheckAt)}</strong></span></div>
       </div>
 

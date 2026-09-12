@@ -10,9 +10,10 @@ import { createProviderClient, PROVIDERS } from './providers.js';
 import {
   activateApiKey, addApiKey, getActiveApiKey, getApiKey, maskApiKey, resolveTaskApiKey,
   publicApiKeySettings, readApiKeySettings, recordApiKeyRequest, removeApiKey, saveApiKeySettings, updateApiKeyProfile, updateApiKeyQuota, updateApiKeyTest,
+  usageDate,
 } from './apiKeySettings.js';
 import { getKnownTeamTranslations, removeManualTeamTranslation, saveManualTeamTranslation, translateTeamNames } from './teamTranslations.js';
-import { nextMonitorCheckAt, normalizeMonitorInterval, normalizeTaskSettings, quotaAwareMonitorInterval, validateTask } from './taskSettings.js';
+import { hasLowQuota, nextMonitorCheckAt, normalizeMonitorInterval, normalizeTaskSettings, quotaAwareMonitorInterval, validateTask } from './taskSettings.js';
 
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -188,6 +189,25 @@ async function getTaskFixtures(task) {
   return { fixtures, source: result.source, fetchedAt: result.fetchedAt, quota: result.quota, providerId: profile.provider, apiKeyId: profile.id };
 }
 
+function enforceLowQuotaFrequency(apiKeyId, quota, now) {
+  if (!apiKeyId || !hasLowQuota(quota)) return;
+  const handledDate = usageDate(new Date(now));
+  const nextTenMinuteCheck = nextMonitorCheckAt(10);
+  tasks.forEach((candidate) => {
+    if (candidate.apiKeyId !== apiKeyId
+      || (candidate.lowQuotaHandledDate === handledDate && candidate.lowQuotaHandledKeyId === apiKeyId)) return;
+    candidate.intervalMinutes = 10;
+    candidate.effectiveIntervalMinutes = 10;
+    candidate.lowQuotaHandledDate = handledDate;
+    candidate.lowQuotaHandledKeyId = apiKeyId;
+    candidate.quotaFrequencyAdjustedAt = now;
+    if (['running', 'error'].includes(candidate.status)
+      && (!candidate.nextCheckAt || Date.parse(candidate.nextCheckAt) > Date.parse(nextTenMinuteCheck))) {
+      candidate.nextCheckAt = nextTenMinuteCheck;
+    }
+  });
+}
+
 async function runTask(task) {
   const revision = task.revision || 0;
   const isCurrent = () => tasks.includes(task) && (task.revision || 0) === revision;
@@ -196,6 +216,7 @@ async function runTask(task) {
     const fixtureResult = await getTaskFixtures(task);
     const { fixtures } = fixtureResult;
     if (!isCurrent()) return;
+    enforceLowQuotaFrequency(fixtureResult.apiKeyId, fixtureResult.quota, now);
     const result = evaluateTaskRules(task, fixtures, task.triggeredRuleKeys || []);
     task.fixtures = fixtures;
     task.lastCheckedAt = now;
@@ -203,7 +224,6 @@ async function runTask(task) {
     task.lastFetchSource = fixtureResult.source;
     task.quota = fixtureResult.quota;
     task.effectiveIntervalMinutes = quotaAwareMonitorInterval(task.intervalMinutes, fixtureResult.quota);
-    task.quotaThrottled = task.effectiveIntervalMinutes > task.intervalMinutes;
     task.providerId = fixtureResult.providerId || task.providerId;
     task.apiKeyId = fixtureResult.apiKeyId || task.apiKeyId;
     task.consecutiveFailures = 0;
@@ -240,7 +260,6 @@ async function runTask(task) {
     task.lastCheckedAt = now;
     const retryInterval = quotaAwareMonitorInterval(task.intervalMinutes, task.quota);
     task.effectiveIntervalMinutes = retryInterval;
-    task.quotaThrottled = retryInterval > task.intervalMinutes;
     task.nextCheckAt = bindingRemoved ? null : new Date(Date.now() + retryDelay(retryInterval, task.consecutiveFailures, error.retryAfterMs)).toISOString();
     broadcast('task-error', task);
   }
@@ -467,6 +486,9 @@ app.post('/api/tasks', (request, response) => {
     triggerHistory: [],
     triggerCount: 0,
     lastAcknowledgedTriggerAt: null,
+    lowQuotaHandledDate: null,
+    lowQuotaHandledKeyId: null,
+    quotaFrequencyAdjustedAt: null,
     lastMessage: '等待首次检查',
     error: null,
   };
@@ -502,6 +524,9 @@ app.put('/api/tasks/:id', (request, response) => {
     triggerHistory: resetHistory ? [] : (task.triggerHistory || []),
     triggerCount: resetHistory ? 0 : (task.triggerCount || 0),
     lastAcknowledgedTriggerAt: resetHistory ? null : (task.lastAcknowledgedTriggerAt || null),
+    lowQuotaHandledDate: selectedProfile?.id === task.apiKeyId ? (task.lowQuotaHandledDate || null) : null,
+    lowQuotaHandledKeyId: selectedProfile?.id === task.apiKeyId ? (task.lowQuotaHandledKeyId || null) : null,
+    quotaFrequencyAdjustedAt: null,
     lastMessage: '设置已更新，等待首次检查',
     error: null,
   });
