@@ -12,7 +12,7 @@ import {
   publicApiKeySettings, readApiKeySettings, recordApiKeyRequest, removeApiKey, saveApiKeySettings, updateApiKeyProfile, updateApiKeyQuota, updateApiKeyTest,
 } from './apiKeySettings.js';
 import { getKnownTeamTranslations, removeManualTeamTranslation, saveManualTeamTranslation, translateTeamNames } from './teamTranslations.js';
-import { nextMonitorCheckAt, normalizeMonitorInterval, normalizeTaskSettings, validateTask } from './taskSettings.js';
+import { nextMonitorCheckAt, normalizeMonitorInterval, normalizeTaskSettings, quotaAwareMonitorInterval, validateTask } from './taskSettings.js';
 
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -202,6 +202,8 @@ async function runTask(task) {
     task.lastSucceededAt = fixtureResult.fetchedAt || new Date().toISOString();
     task.lastFetchSource = fixtureResult.source;
     task.quota = fixtureResult.quota;
+    task.effectiveIntervalMinutes = quotaAwareMonitorInterval(task.intervalMinutes, fixtureResult.quota);
+    task.quotaThrottled = task.effectiveIntervalMinutes > task.intervalMinutes;
     task.providerId = fixtureResult.providerId || task.providerId;
     task.apiKeyId = fixtureResult.apiKeyId || task.apiKeyId;
     task.consecutiveFailures = 0;
@@ -224,7 +226,7 @@ async function runTask(task) {
         : '主队落后监控的比赛已结束，任务自动停止';
     } else {
       task.status = 'running';
-      task.nextCheckAt = nextMonitorCheckAt(task.intervalMinutes);
+      task.nextCheckAt = nextMonitorCheckAt(task.effectiveIntervalMinutes);
     }
     if (result.matches.length) broadcast('task-triggered', { ...task, triggerEvents: result.matches });
   } catch (error) {
@@ -236,7 +238,10 @@ async function runTask(task) {
     task.consecutiveFailures = (task.consecutiveFailures || 0) + 1;
     task.lastMessage = bindingRemoved ? error.message : '本轮未获取到最新比分，等待自动重试';
     task.lastCheckedAt = now;
-    task.nextCheckAt = bindingRemoved ? null : new Date(Date.now() + retryDelay(task.intervalMinutes, task.consecutiveFailures, error.retryAfterMs)).toISOString();
+    const retryInterval = quotaAwareMonitorInterval(task.intervalMinutes, task.quota);
+    task.effectiveIntervalMinutes = retryInterval;
+    task.quotaThrottled = retryInterval > task.intervalMinutes;
+    task.nextCheckAt = bindingRemoved ? null : new Date(Date.now() + retryDelay(retryInterval, task.consecutiveFailures, error.retryAfterMs)).toISOString();
     broadcast('task-error', task);
   }
   saveTasks();

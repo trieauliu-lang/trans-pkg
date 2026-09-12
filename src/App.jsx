@@ -267,7 +267,7 @@ function TaskListItem({ task, active, unreadCount = 0, onClick }) {
       <span className="task-item__icon">{unreadCount ? <BellRing size={16} /> : <Radio size={16} />}{unreadCount > 0 && <i>{unreadCount > 99 ? '99+' : unreadCount}</i>}</span>
       <span className="task-item__copy">
         <strong>{task.name}</strong>
-        <small>{task.fixtures.length} 场 · {task.intervalMinutes} 分钟</small>
+        <small>{task.fixtures.length} 场 · {task.quotaThrottled ? `${task.effectiveIntervalMinutes} 分钟（额度保护）` : `${task.intervalMinutes} 分钟`}</small>
       </span>
       <StatusPill status={task.status} />
     </button>
@@ -454,7 +454,7 @@ function TaskDetail({ task, translations, apiKeys = [], onAction, onEdit }) {
 
       <div className="metric-strip">
         <div><Clock3 size={18} /><span>开始时间<strong>{formatDateTime(task.startAt)}</strong></span></div>
-        <div><RefreshCw size={18} /><span>监控频次<strong>{task.intervalMinutes} 分钟</strong></span></div>
+        <div><RefreshCw size={18} /><span>监控频次<strong>{task.quotaThrottled ? `${task.effectiveIntervalMinutes} 分钟 · 额度保护` : `${task.intervalMinutes} 分钟`}</strong></span></div>
         <div><AlarmClock size={18} /><span>{task.status === 'scheduled' ? '计划启动' : '下次检查'}<strong>{formatDateTime(task.status === 'scheduled' ? task.startAt : task.nextCheckAt)}</strong></span></div>
       </div>
 

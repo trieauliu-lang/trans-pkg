@@ -1,8 +1,18 @@
 export const MIN_MONITOR_INTERVAL_MINUTES = 5;
+export const LOW_QUOTA_THRESHOLD = 25;
+export const LOW_QUOTA_INTERVAL_MINUTES = 10;
 
 export function normalizeMonitorInterval(value) {
   const interval = Number(value);
   return Number.isFinite(interval) ? Math.max(MIN_MONITOR_INTERVAL_MINUTES, interval) : MIN_MONITOR_INTERVAL_MINUTES;
+}
+
+export function quotaAwareMonitorInterval(intervalMinutes, quota) {
+  const configuredInterval = normalizeMonitorInterval(intervalMinutes);
+  const remaining = Number(quota?.remaining);
+  return quota?.remaining != null && Number.isFinite(remaining) && remaining < LOW_QUOTA_THRESHOLD
+    ? Math.max(configuredInterval, LOW_QUOTA_INTERVAL_MINUTES)
+    : configuredInterval;
 }
 
 export function nextMonitorCheckAt(intervalMinutes, now = Date.now()) {

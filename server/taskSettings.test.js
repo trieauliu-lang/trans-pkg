@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { nextMonitorCheckAt, normalizeMonitorInterval, normalizeTaskSettings, validateTask } from './taskSettings.js';
+import { nextMonitorCheckAt, normalizeMonitorInterval, normalizeTaskSettings, quotaAwareMonitorInterval, validateTask } from './taskSettings.js';
 
 const fixture = {
   fixture: { id: 1549016, date: '2026-09-12T01:00:00+08:00' },
@@ -39,6 +39,14 @@ test('migrates short intervals to five minutes and aligns shared checks', () => 
   assert.equal(normalizeMonitorInterval(10), 10);
   assert.equal(nextMonitorCheckAt(3, Date.parse('2026-09-12T00:02:12.000Z')), '2026-09-12T00:05:00.000Z');
   assert.equal(nextMonitorCheckAt(5, Date.parse('2026-09-12T00:02:12.000Z')), '2026-09-12T00:05:00.000Z');
+});
+
+test('slows shared monitoring to at least ten minutes below 25 remaining requests', () => {
+  assert.equal(quotaAwareMonitorInterval(5, { remaining: 24 }), 10);
+  assert.equal(quotaAwareMonitorInterval(5, { remaining: '0' }), 10);
+  assert.equal(quotaAwareMonitorInterval(5, { remaining: 25 }), 5);
+  assert.equal(quotaAwareMonitorInterval(15, { remaining: 24 }), 15);
+  assert.equal(quotaAwareMonitorInterval(5, { remaining: null }), 5);
 });
 
 test('home trailing rule does not require a numeric threshold', () => {
