@@ -157,14 +157,33 @@ test('deletes saved keys and selects a remaining key when the active one is remo
   assert.deepEqual(settings, { apiKeys: [], activeApiKeyId: null });
 });
 
-test('deleting an inactive key preserves the active key and environment keys cannot be deleted', () => {
+test('deleting an inactive key preserves the active key', () => {
   let settings = addApiKey({ apiKeys: [], activeApiKeyId: null }, 'first-key', '第一组');
   const firstId = settings.activeApiKeyId;
   settings = addApiKey(settings, 'second-key', '第二组');
   const secondId = settings.activeApiKeyId;
   settings = removeApiKey(settings, firstId);
   assert.equal(settings.activeApiKeyId, secondId);
-  const environmentSettings = readApiKeySettings('missing-settings.json', 'environment-key');
-  assert.throws(() => removeApiKey(environmentSettings, environmentSettings.activeApiKeyId), /服务器配置/);
   assert.throws(() => removeApiKey(settings, 'missing'), /不存在/);
+});
+
+test('deleting an environment key keeps it hidden after a server restart without persisting its secret', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'match-pulse-env-delete-'));
+  const file = path.join(directory, 'settings.json');
+  try {
+    let settings = readApiKeySettings(file, 'environment-secret-delete');
+    const environmentId = settings.activeApiKeyId;
+    settings = removeApiKey(settings, environmentId);
+    assert.equal(settings.apiKeys.length, 0);
+    assert.deepEqual(settings.disabledEnvironmentApiKeyIds, [environmentId]);
+    saveApiKeySettings(file, settings);
+    const savedText = fs.readFileSync(file, 'utf8');
+    assert.ok(!savedText.includes('environment-secret-delete'));
+    const reloaded = readApiKeySettings(file, 'environment-secret-delete');
+    assert.equal(reloaded.apiKeys.length, 0);
+    assert.equal(reloaded.activeApiKeyId, null);
+    assert.deepEqual(reloaded.disabledEnvironmentApiKeyIds, [environmentId]);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
 });

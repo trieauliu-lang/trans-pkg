@@ -80,10 +80,14 @@ export function readApiKeySettings(file, environmentValue = '') {
   if (Array.isArray(stored.apiKeys)) stored.apiKeys.forEach((item) => addStored(item?.key, item?.label, item?.provider, item));
   else if (stored.apiKey) addStored(stored.apiKey, stored.label);
 
+  const disabledEnvironmentApiKeyIds = Array.isArray(stored.disabledEnvironmentApiKeyIds)
+    ? stored.disabledEnvironmentApiKeyIds.filter((id) => typeof id === 'string').slice(-20)
+    : [];
   try {
     const environmentKey = normalizeApiKey(environmentValue);
     if (!apiKeys.some((item) => item.provider === 'api-football' && item.key === environmentKey)) {
       const record = keyRecord(environmentKey, '环境变量 API', 'api-football', 'environment');
+      if (disabledEnvironmentApiKeyIds.includes(record.id)) throw new Error('环境变量 Key 已在页面停用');
       const persistedUsage = stored.apiKeyUsage?.[record.id];
       apiKeys.push(persistedUsage ? {
         ...record,
@@ -98,7 +102,7 @@ export function readApiKeySettings(file, environmentValue = '') {
   const activeApiKeyId = apiKeys.some((item) => item.id === stored.activeApiKeyId)
     ? stored.activeApiKeyId
     : apiKeys[0]?.id || null;
-  return { apiKeys, activeApiKeyId };
+  return { apiKeys, activeApiKeyId, disabledEnvironmentApiKeyIds };
 }
 
 export function addApiKey(settings, value, label = '', provider = 'api-football') {
@@ -110,7 +114,7 @@ export function addApiKey(settings, value, label = '', provider = 'api-football'
   const apiKeys = existing
     ? settings.apiKeys.map((item) => item.id === id ? record : item)
     : [...settings.apiKeys, record];
-  return activateApiKey({ apiKeys, activeApiKeyId: id }, id);
+  return activateApiKey({ ...settings, apiKeys, activeApiKeyId: id }, id);
 }
 
 export function updateApiKeyProfile(settings, id, { label = '', provider } = {}) {
@@ -140,11 +144,14 @@ export function updateApiKeyProfile(settings, id, { label = '', provider } = {})
 export function removeApiKey(settings, id) {
   const current = getApiKey(settings, id);
   if (!current) throw new Error('API Key 不存在');
-  if (current.source === 'environment') throw new Error('环境变量 Key 需要从服务器配置中删除');
   const apiKeys = settings.apiKeys.filter((item) => item.id !== id);
   return {
+    ...settings,
     apiKeys,
     activeApiKeyId: settings.activeApiKeyId === id ? apiKeys[0]?.id || null : settings.activeApiKeyId,
+    ...(current.source === 'environment' ? {
+      disabledEnvironmentApiKeyIds: [...new Set([...(settings.disabledEnvironmentApiKeyIds || []), current.id])].slice(-20),
+    } : {}),
   };
 }
 
@@ -152,6 +159,7 @@ export function activateApiKey(settings, id) {
   if (!settings.apiKeys.some((item) => item.id === id)) throw new Error('API Key 不存在');
   const lastUsedAt = new Date().toISOString();
   return {
+    ...settings,
     apiKeys: settings.apiKeys.map((item) => item.id === id ? { ...item, lastUsedAt } : item),
     activeApiKeyId: id,
   };
@@ -233,6 +241,11 @@ export function saveApiKeySettings(file, settings) {
   const apiKeyUsage = Object.fromEntries(settings.apiKeys.map(({ id, usageByDate, lastRequestAt, latestQuota, quotaUpdatedAt }) => [id, {
     usageByDate: usageByDate || {}, lastRequestAt: lastRequestAt || null, latestQuota: latestQuota || null, quotaUpdatedAt: quotaUpdatedAt || null,
   }]));
-  fs.writeFileSync(temporaryFile, JSON.stringify({ apiKeys, apiKeyUsage, activeApiKeyId: settings.activeApiKeyId }, null, 2), { mode: 0o600 });
+  fs.writeFileSync(temporaryFile, JSON.stringify({
+    apiKeys,
+    apiKeyUsage,
+    activeApiKeyId: settings.activeApiKeyId,
+    disabledEnvironmentApiKeyIds: settings.disabledEnvironmentApiKeyIds || [],
+  }, null, 2), { mode: 0o600 });
   fs.renameSync(temporaryFile, file);
 }

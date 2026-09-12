@@ -39,6 +39,15 @@ test('HTTP 200 provider errors are failures, not empty fixture results', async (
   await assert.rejects(client(async () => Response.json({ errors: { token: 'private value' }, response: [] }))('fixtures'), { code: 'API_ERROR' });
 });
 
+test('accepts the object response used by the API-Football status endpoint', async () => {
+  const request = client(async (url) => {
+    assert.equal(url.pathname, '/status');
+    return Response.json({ response: { subscription: { active: true }, requests: { current: 8, limit_day: 100 } }, errors: [] });
+  });
+  const result = await request('status', {}, { responseType: 'object' });
+  assert.equal(result.data.requests.current, 8);
+});
+
 test('classifies nested DNS, timeout and certificate errors', () => {
   for (const [code, expected] of [['EAI_AGAIN', 'DNS'], ['UND_ERR_CONNECT_TIMEOUT', 'TIMEOUT'], ['CERT_HAS_EXPIRED', 'TLS'], ['ECONNRESET', 'NETWORK']]) {
     assert.equal(networkError(new TypeError('fetch failed', { cause: { code } })).code, expected);

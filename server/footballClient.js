@@ -33,7 +33,7 @@ export function retryDelay(intervalMinutes, failures, retryAfterMs = 0) {
 export function createFootballClient({ apiKey, timeoutMs = 15_000, fetchImpl = fetch, dispatcher, onRequest = () => {} } = {}) {
   // One agent per client; respects HTTPS_PROXY, HTTP_PROXY and NO_PROXY.
   const agent = dispatcher ?? new EnvHttpProxyAgent();
-  return async function footballRequest(endpoint, params = {}) {
+  return async function footballRequest(endpoint, params = {}, { responseType = 'array' } = {}) {
     if (!apiKey || apiKey === 'replace_with_your_api_key') {
       throw new FootballError('CONFIG', '请在 .env 中填写有效的 API_FOOTBALL_KEY 并重启服务。');
     }
@@ -68,7 +68,10 @@ export function createFootballClient({ apiKey, timeoutMs = 15_000, fetchImpl = f
         // Do not echo arbitrary upstream content, which may contain credentials.
         throw new FootballError('API_ERROR', '比分服务返回错误，请检查 API Key、套餐权限、请求参数及剩余配额。');
       }
-      if (!Array.isArray(body.response)) throw new FootballError('INVALID_RESPONSE', '比分服务返回的数据格式不正确，稍后自动重试。');
+      const validResponse = responseType === 'object'
+        ? body.response && typeof body.response === 'object' && !Array.isArray(body.response)
+        : Array.isArray(body.response);
+      if (!validResponse) throw new FootballError('INVALID_RESPONSE', '比分服务返回的数据格式不正确，稍后自动重试。');
       return { data: body.response, quota: {
         remaining: response.headers.get('x-ratelimit-requests-remaining'),
         limit: response.headers.get('x-ratelimit-requests-limit'),

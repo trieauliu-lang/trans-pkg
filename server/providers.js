@@ -212,6 +212,15 @@ export function createProviderClient({ providerId, apiKey, fetchImpl, dispatcher
   const request = createFootballClient({ apiKey, fetchImpl, dispatcher, timeoutMs, onRequest });
   return {
     fetchFixtures: (date, timezone = 'Asia/Shanghai') => request('fixtures', { date, timezone }),
-    test: async () => ({ quota: (await request('timezone')).quota }),
+    test: async () => {
+      const result = await request('status', {}, { responseType: 'object' });
+      const limit = Number(result.data?.requests?.limit_day);
+      const used = Number(result.data?.requests?.current);
+      const quota = {
+        limit: result.quota.limit ?? (Number.isFinite(limit) ? String(limit) : null),
+        remaining: result.quota.remaining ?? (Number.isFinite(limit) && Number.isFinite(used) ? String(Math.max(0, limit - used)) : null),
+      };
+      return { quota };
+    },
   };
 }

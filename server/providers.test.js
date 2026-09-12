@@ -19,6 +19,20 @@ test('normalizes abnormal terminal statuses across providers', () => {
   assert.equal(normalizeTheSportsDbEvent({ idEvent: 2, dateEvent: '2026-09-11', strStatus: 'Walk Over' }).fixture.status.short, 'WO');
 });
 
+test('API-Football tests the account status endpoint and derives daily quota', async () => {
+  let requestedUrl;
+  const client = createProviderClient({ providerId: 'api-football', apiKey: 'football-key', dispatcher: {}, fetchImpl: async (url) => {
+    requestedUrl = url;
+    return Response.json({
+      errors: [],
+      response: { subscription: { active: true }, requests: { current: 8, limit_day: 100 } },
+    });
+  } });
+  const result = await client.test();
+  assert.equal(requestedUrl.pathname, '/status');
+  assert.deepEqual(result.quota, { limit: '100', remaining: '92' });
+});
+
 test('TheStatsAPI uses bearer auth, date filters and pagination', async () => {
   const calls = [];
   let tracked = 0;
