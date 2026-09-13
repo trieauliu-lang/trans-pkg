@@ -2,10 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { compare, evaluateTask, evaluateTaskRules, taskMonitoringComplete, terminalTaskMessage, TERMINAL_STATUSES } from './rules.js';
 
-const fixture = (id, status, home, away) => ({
+const fixture = (id, status, home, away, halftime = null) => ({
   fixture: { id, status: { short: status } },
   teams: { home: { name: `主队${id}` }, away: { name: `客队${id}` } },
   goals: { home, away },
+  ...(halftime ? { score: { halftime } } : {}),
 });
 
 test('比较运算支持常用操作符', () => {
@@ -43,11 +44,18 @@ test('上半场尚未结束时不判断主队落后条件', () => {
   assert.match(result.reason, /等待上半场结束并进入中场/);
 });
 
-test('错过明确中场状态后不使用下半场比分补判', () => {
+test('进入下半场但半场比分暂缺时继续等待补判', () => {
   const task = { evaluateWhen: 'halftime', matchScope: 'any', metric: 'home_trailing', operator: 'lt', threshold: 0 };
   const result = evaluateTask(task, [fixture(1, '2H', 1, 2)]);
   assert.equal(result.matched, false);
-  assert.match(result.reason, /不使用下半场或赛后比分补判/);
+  assert.match(result.reason, /等待接口提供半场比分后补判/);
+});
+
+test('错过中场状态后使用明确半场比分补判', () => {
+  const task = { evaluateWhen: 'halftime', matchScope: 'any', metric: 'home_trailing', operator: 'lt', threshold: 0 };
+  const result = evaluateTask(task, [fixture(1, '2H', 2, 2, { home: 0, away: 1 })]);
+  assert.equal(result.matched, true);
+  assert.equal(result.fixtureId, 1);
 });
 
 test('选择全部比赛时等待所有比赛进入半场后', () => {
@@ -91,19 +99,37 @@ test('中场条件未满足也只判断一次并完成该规则', () => {
   assert.equal(correctedLater.matches.length, 0);
 });
 
-test('直接看到下半场时标记中场规则已完成但不触发', () => {
+test('直接看到下半场时等待半场比分，不提前完成规则', () => {
   const task = { rules: [{ id: 'trailing', fixtureId: '1', evaluateWhen: 'halftime', metric: 'home_trailing' }] };
   const result = evaluateTaskRules(task, [fixture(1, '2H', 0, 2)]);
   assert.equal(result.matches.length, 0);
+  assert.deepEqual(result.completedRuleKeys, []);
+  assert.match(result.reason, /等待接口提供半场比分后补判/);
+});
+
+test('下半场或完场后按明确半场比分补判且只执行一次', () => {
+  const task = { rules: [{ id: 'trailing', fixtureId: '1', evaluateWhen: 'halftime', metric: 'home_trailing' }] };
+  const result = evaluateTaskRules(task, [fixture(1, '2H', 2, 2, { home: 0, away: 1 })]);
+  assert.deepEqual(result.matches.map((match) => match.key), ['trailing:1']);
   assert.deepEqual(result.completedRuleKeys, ['trailing:1']);
-  assert.match(result.reason, /不补判/);
+  assert.match(result.matches[0].message, /0–1/);
+  const repeated = evaluateTaskRules(task, [fixture(1, 'FT', 3, 2, { home: 0, away: 1 })], ['trailing:1'], result.completedRuleKeys);
+  assert.equal(repeated.matches.length, 0);
+});
+
+test('比赛结束仍无半场比分时才标记无法补判', () => {
+  const task = { rules: [{ id: 'trailing', fixtureId: '1', evaluateWhen: 'halftime', metric: 'home_trailing' }] };
+  const result = evaluateTaskRules(task, [fixture(1, 'FT', 2, 2)]);
+  assert.deepEqual(result.completedRuleKeys, ['trailing:1']);
+  assert.match(result.reason, /无法补判/);
 });
 
 test('中场比分必须是非负有限数字才允许判断', () => {
   const task = { rules: [{ id: 'trailing', fixtureId: '1', evaluateWhen: 'halftime', metric: 'home_trailing' }] };
   const result = evaluateTaskRules(task, [fixture(1, 'HT', -1, 2)]);
   assert.equal(result.matches.length, 0);
-  assert.deepEqual(result.completedRuleKeys, ['trailing:1']);
+  assert.deepEqual(result.completedRuleKeys, []);
+  assert.match(result.reason, /等待接口提供半场比分/);
 });
 
 test('a rule can target one fixture while an all-fixtures rule triggers once per match', () => {
@@ -129,10 +155,12 @@ test('cancelled, abandoned, awarded, walkover, postponed and suspended matches a
 
 test('中场规则在目标到达或越过中场时停止', () => {
   const targeted = { rules: [{ id: 'trailing', fixtureId: '1', evaluateWhen: 'halftime', metric: 'home_trailing' }] };
-  assert.equal(taskMonitoringComplete(targeted, [fixture(1, 'FT', 1, 2), fixture(2, '2H', 0, 0)]), true);
+  assert.equal(taskMonitoringComplete(targeted, [fixture(1, 'FT', 1, 2), fixture(2, '2H', 0, 0)]), false);
+  assert.equal(taskMonitoringComplete({ ...targeted, completedRuleKeys: ['trailing:1'] }, [fixture(1, 'FT', 1, 2), fixture(2, '2H', 0, 0)]), true);
 
-  const allFixtures = { rules: [{ id: 'trailing', fixtureId: 'all', evaluateWhen: 'halftime', metric: 'home_trailing' }] };
-  assert.equal(taskMonitoringComplete(allFixtures, [fixture(1, 'FT', 1, 2), fixture(2, '2H', 0, 0)]), true);
+  const allFixtures = { rules: [{ id: 'trailing', fixtureId: 'all', matchScope: 'all', evaluateWhen: 'halftime', metric: 'home_trailing' }] };
+  assert.equal(taskMonitoringComplete(allFixtures, [fixture(1, 'FT', 1, 2), fixture(2, '2H', 0, 0)]), false);
+  assert.equal(taskMonitoringComplete({ ...allFixtures, completedRuleKeys: ['trailing:all'] }, [fixture(1, 'FT', 1, 2), fixture(2, '2H', 0, 0)]), true);
   assert.equal(taskMonitoringComplete(allFixtures, [fixture(1, 'FT', 1, 2), fixture(2, 'FT', 0, 0)]), true);
 });
 

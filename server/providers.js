@@ -31,6 +31,7 @@ export function normalizeTheStatsMatch(match) {
   const score = match.score || match.scores || {};
   const homeScore = score.home ?? score.home_score ?? home.score ?? null;
   const awayScore = score.away ?? score.away_score ?? away.score ?? null;
+  const halftime = score.halftime || match.halftime_score || match.half_time_score || {};
   return {
     provider: 'the-stats-api',
     fixture: {
@@ -49,6 +50,10 @@ export function normalizeTheStatsMatch(match) {
       away: { id: away.id || away.team_id || '', name: away.name || '客队待定', logo: away.logo || '' },
     },
     goals: { home: homeScore == null ? null : Number(homeScore), away: awayScore == null ? null : Number(awayScore) },
+    score: { halftime: {
+      home: halftime.home ?? halftime.home_score ?? match.home_half_time_score ?? null,
+      away: halftime.away ?? halftime.away_score ?? match.away_half_time_score ?? null,
+    } },
   };
 }
 
@@ -102,6 +107,7 @@ export function normalizeTheSportsDbEvent(event) {
       away: { id: event.idAwayTeam || '', name: event.strAwayTeam || '客队待定', logo: event.strAwayTeamBadge || '' },
     },
     goals: { home: score(event.intHomeScore), away: score(event.intAwayScore) },
+    score: { halftime: { home: score(event.intHomeScoreHalf), away: score(event.intAwayScoreHalf) } },
   };
 }
 

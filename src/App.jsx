@@ -86,6 +86,7 @@ function compactFixture(fixture) {
       away: fixture.teams?.away,
     },
     goals: fixture.goals,
+    score: fixture.score?.halftime ? { halftime: fixture.score.halftime } : undefined,
   };
 }
 

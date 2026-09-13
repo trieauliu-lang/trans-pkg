@@ -25,6 +25,20 @@ export function compare(actual, operator, expected) {
   return Boolean(operations[operator]?.(actual, expected));
 }
 
+function validScorePair(score) {
+  const home = Number(score?.home);
+  const away = Number(score?.away);
+  return score?.home != null && score?.away != null
+    && Number.isFinite(home) && Number.isFinite(away) && home >= 0 && away >= 0;
+}
+
+function halftimeSnapshot(item) {
+  const status = item.fixture.status.short;
+  const score = HALFTIME_REACHED_STATUSES.has(status) ? item.goals : item.score?.halftime;
+  if (!validScorePair(score)) return null;
+  return { ...item, goals: { home: Number(score.home), away: Number(score.away) } };
+}
+
 export function evaluateTask(task, fixtures) {
   if (!fixtures.length) return { matched: false, reason: '暂无比赛数据' };
 
@@ -33,11 +47,11 @@ export function evaluateTask(task, fixtures) {
     return { matched: false, reason: `等待完场 ${finished.length}/${fixtures.length}` };
   }
 
-  const halftimeReached = fixtures.filter((item) => HALFTIME_REACHED_STATUSES.has(item.fixture.status.short));
+  const halftimeReached = fixtures.map(halftimeSnapshot).filter(Boolean);
   const halftimePassed = fixtures.filter((item) => HALFTIME_PASSED_STATUSES.has(item.fixture.status.short));
   if (task.evaluateWhen === 'halftime' && task.matchScope === 'all' && halftimeReached.length !== fixtures.length) {
     return { matched: false, reason: halftimePassed.length
-      ? `已错过明确中场状态，不使用下半场或赛后比分补判（中场 ${halftimeReached.length}/${fixtures.length}）`
+      ? `等待接口提供半场比分后补判（已取得 ${halftimeReached.length}/${fixtures.length}）`
       : `等待上半场结束并进入中场 ${halftimeReached.length}/${fixtures.length}` };
   }
 
@@ -46,7 +60,7 @@ export function evaluateTask(task, fixtures) {
     : task.evaluateWhen === 'halftime' ? halftimeReached : fixtures;
   if (!candidates.length) {
     return { matched: false, reason: task.evaluateWhen === 'halftime'
-      ? halftimePassed.length ? '已错过明确中场状态，不使用下半场或赛后比分补判' : '等待上半场结束并进入中场'
+      ? halftimePassed.length ? '已进入下半场，等待接口提供半场比分后补判' : '等待上半场结束并进入中场'
       : '等待首场比赛完场' };
   }
 
@@ -107,9 +121,7 @@ export function taskMonitoringComplete(task, fixtures) {
       const expectedKeys = rule.matchScope === 'all'
         ? [`${rule.id}:all`]
         : targets.map((fixture) => `${rule.id}:${fixture.fixture.id}`);
-      return expectedKeys.every((key) => completed.has(key)) || targets.every((fixture) => HALFTIME_REACHED_STATUSES.has(fixture.fixture.status.short)
-        || HALFTIME_PASSED_STATUSES.has(fixture.fixture.status.short)
-        || TERMINAL_STATUSES.has(fixture.fixture.status.short));
+      return expectedKeys.every((key) => completed.has(key));
     }
     if (rule.evaluateWhen === 'all_finished') {
       return fixtures.every((fixture) => TERMINAL_STATUSES.has(fixture.fixture.status.short));
@@ -162,6 +174,7 @@ export function evaluateTaskRules(task, fixtures, triggeredRuleKeys = [], comple
   let eligibleCount = 0;
   let halftimeEvaluated = 0;
   let halftimeMissed = 0;
+  let halftimePendingBackfill = 0;
 
   taskRules(task).forEach((rule, index) => {
     const normalizedRule = { ...rule, id: String(rule.id || `rule-${index + 1}`) };
@@ -173,14 +186,11 @@ export function evaluateTaskRules(task, fixtures, triggeredRuleKeys = [], comple
       if (normalizedRule.matchScope === 'all') {
         const key = `${normalizedRule.id}:all`;
         if (completed.has(key)) return;
-        const allAtHalftime = targets.length > 0
-          && targets.every((item) => HALFTIME_REACHED_STATUSES.has(item.fixture.status.short));
-        const allConsumed = targets.length > 0 && targets.every((item) =>
-          HALFTIME_REACHED_STATUSES.has(item.fixture.status.short)
-          || HALFTIME_PASSED_STATUSES.has(item.fixture.status.short)
-          || TERMINAL_STATUSES.has(item.fixture.status.short));
-        if (allAtHalftime) {
-          const checks = targets.map((item) => ({ item, ...checkRule(normalizedRule, item) }));
+        const halftimeTargets = targets.map(halftimeSnapshot);
+        const allHaveHalftimeScores = halftimeTargets.length > 0 && halftimeTargets.every(Boolean);
+        const allTerminal = targets.length > 0 && targets.every((item) => TERMINAL_STATUSES.has(item.fixture.status.short));
+        if (allHaveHalftimeScores) {
+          const checks = halftimeTargets.map((item) => ({ item, ...checkRule(normalizedRule, item) }));
           completed.add(key);
           halftimeEvaluated += checks.length;
           eligibleCount += checks.length;
@@ -188,9 +198,12 @@ export function evaluateTaskRules(task, fixtures, triggeredRuleKeys = [], comple
             const hit = checks[0];
             matches.push({ key, ruleId: normalizedRule.id, fixtureId: hit.item.fixture.id, message: matchMessage(normalizedRule, hit.item, hit.actual) });
           }
-        } else if (allConsumed) {
+        } else if (allTerminal) {
           completed.add(key);
           halftimeMissed += 1;
+        } else if (targets.some((item) => HALFTIME_REACHED_STATUSES.has(item.fixture.status.short)
+          || HALFTIME_PASSED_STATUSES.has(item.fixture.status.short))) {
+          halftimePendingBackfill += 1;
         }
         return;
       }
@@ -199,17 +212,20 @@ export function evaluateTaskRules(task, fixtures, triggeredRuleKeys = [], comple
         const key = `${normalizedRule.id}:${item.fixture.id}`;
         if (completed.has(key)) return;
         const status = item.fixture.status.short;
-        if (HALFTIME_REACHED_STATUSES.has(status)) {
-          const check = { item, ...checkRule(normalizedRule, item) };
+        const halftimeItem = halftimeSnapshot(item);
+        if (halftimeItem) {
+          const check = { item: halftimeItem, ...checkRule(normalizedRule, halftimeItem) };
           completed.add(key);
           halftimeEvaluated += 1;
           eligibleCount += 1;
           if (!triggered.has(key) && check.pass) {
-            matches.push({ key, ruleId: normalizedRule.id, fixtureId: item.fixture.id, message: matchMessage(normalizedRule, item, check.actual) });
+            matches.push({ key, ruleId: normalizedRule.id, fixtureId: item.fixture.id, message: matchMessage(normalizedRule, halftimeItem, check.actual) });
           }
-        } else if (HALFTIME_PASSED_STATUSES.has(status) || TERMINAL_STATUSES.has(status)) {
+        } else if (TERMINAL_STATUSES.has(status)) {
           completed.add(key);
           halftimeMissed += 1;
+        } else if (HALFTIME_REACHED_STATUSES.has(status) || HALFTIME_PASSED_STATUSES.has(status)) {
+          halftimePendingBackfill += 1;
         }
       });
       return;
@@ -241,7 +257,8 @@ export function evaluateTaskRules(task, fixtures, triggeredRuleKeys = [], comple
     completedRuleKeys: [...completed],
     reason: matches.length
       ? `${matches.length} 个新条件已满足：${matches.map((match) => match.message).join('；')}`
-      : halftimeMissed ? '未捕获明确中场状态，比赛已进入下半场或赛后；不补判'
+      : halftimeMissed ? '比赛已经结束，但接口未提供可用半场比分，无法补判'
+        : halftimePendingBackfill ? '比赛已到中场或下半场，等待接口提供半场比分后补判'
         : halftimeEvaluated ? '已按中场比分判断，条件未满足，不提醒'
           : eligibleCount ? '持续监控中，暂无新的指标满足' : '等待比赛进入规则判断阶段',
   };
