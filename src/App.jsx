@@ -556,6 +556,22 @@ export default function App() {
       .sort((left, right) => Date.parse(left.fixture.date) - Date.parse(right.fixture.date));
   }, [fixtures, fixtureSearch, untranslatedOnly, teamTranslations]);
   const displayedFixtures = useMemo(() => visibleFixtures.slice(0, visibleCount), [visibleFixtures, visibleCount]);
+  const displayedFixtureGroups = useMemo(() => {
+    const groups = new Map();
+    displayedFixtures.forEach((fixture) => {
+      const key = `${fixture.provider || 'provider'}:${fixture.league?.id || fixture.league?.name || 'league'}`;
+      if (!groups.has(key)) {
+        groups.set(key, {
+          key,
+          name: fixture.league?.name || '其他比赛',
+          country: fixture.league?.country || '',
+          fixtures: [],
+        });
+      }
+      groups.get(key).fixtures.push(fixture);
+    });
+    return [...groups.values()];
+  }, [displayedFixtures]);
   const translationCoverage = useMemo(() => {
     const teams = new Map();
     fixtures.forEach((fixture) => [fixture.teams.home, fixture.teams.away].forEach((team) => teams.set(team.name, team)));
@@ -1067,7 +1083,7 @@ export default function App() {
         </div>
       </header>
 
-      {activePage === 'monitor' && <aside className="sidebar" id="tasks">
+      {activePage === 'monitor' && <aside className={`sidebar ${tasks.length ? '' : 'sidebar--empty'}`} id="tasks">
         <div className="sidebar__label"><span>监控任务</span><strong>{tasks.length}</strong></div>
         <nav className="task-list" aria-label="监控任务列表">
           {tasks.map((task) => <TaskListItem key={task.id} task={task} active={activeTask?.id === task.id} unreadCount={unreadReminderCount(task)} onClick={() => selectTask(task.id)} />)}
@@ -1085,8 +1101,8 @@ export default function App() {
       <main id="top" className={`workspace ${activePage === 'fixtures' ? 'workspace--full' : ''}`}>
         <section className="page-header">
           <div className="page-header__copy">
-            <h1>{activePage === 'fixtures' ? `${monitorDateLabel(date)}，选择比赛` : runningCount ? `${runningCount} 个任务正在监控` : '监控任务'}</h1>
-            <p>{activePage === 'fixtures' ? '选定比赛后，再设置清楚的判断时机和提醒条件。' : '状态、判断规则和提醒记录集中在这里。'}</p>
+            <h1>{activePage === 'fixtures' ? `${monitorDateLabel(date)}的比赛` : '监控管理'}</h1>
+            <p>{activePage === 'fixtures' ? '选择比赛，再配置判断时机和提醒条件。' : runningCount ? `${runningCount} 个任务正在运行或等待启动。` : '查看任务状态、判断规则和提醒记录。'}</p>
           </div>
           <dl className="summary-list">
             <div><dt>进行中的任务</dt><dd>{runningCount}</dd></div>
@@ -1117,7 +1133,7 @@ export default function App() {
               <label className="fixture-search"><Search size={14} /><input value={fixtureSearch} onChange={(event) => setFixtureSearch(event.target.value)} placeholder="搜索球队或联赛" aria-label="搜索球队或联赛" /></label>
               <span>{selectedIds.length} 场已选择</span>
             </div>
-            {loadingFixtures ? <div className="loading-state"><LoaderCircle className="spin" /><span>正在查询比赛…</span></div> : visibleFixtures.length ? <><div className="fixture-grid">{displayedFixtures.map((fixture) => <MatchCard key={fixture.fixture.id} fixture={fixture} translations={teamTranslations} selected={selectedIds.includes(fixture.fixture.id)} onToggle={toggleFixture} onTranslate={editTeamTranslation} />)}</div>{visibleCount < visibleFixtures.length && <button className="load-more" onClick={() => setVisibleCount((count) => count + 24)}>显示更多比赛（剩余 {visibleFixtures.length - visibleCount} 场）</button>}</> : <div className="loading-state"><Search /><span>{hasQueriedFixtures ? '没有找到符合条件的比赛' : '选择日期后点击“查询比赛”，页面不会自动消耗 API 额度'}</span></div>}
+            {loadingFixtures ? <div className="loading-state"><LoaderCircle className="spin" /><span>正在查询比赛…</span></div> : visibleFixtures.length ? <><div className="league-list">{displayedFixtureGroups.map((group) => <section className="league-group" key={group.key}><header className="league-group__header"><div><h3>{group.name}</h3>{group.country && <span>{group.country}</span>}</div><strong>{group.fixtures.length} 场</strong></header><div className="fixture-list">{group.fixtures.map((fixture) => <MatchCard key={fixture.fixture.id} fixture={fixture} translations={teamTranslations} selected={selectedIds.includes(fixture.fixture.id)} onToggle={toggleFixture} onTranslate={editTeamTranslation} />)}</div></section>)}</div>{visibleCount < visibleFixtures.length && <button className="load-more" onClick={() => setVisibleCount((count) => count + 24)}>显示更多比赛（剩余 {visibleFixtures.length - visibleCount} 场）</button>}</> : <div className="loading-state"><Search /><span>{hasQueriedFixtures ? '没有找到符合条件的比赛' : '选择日期后点击“查询比赛”，页面不会自动消耗 API 额度'}</span></div>}
             {selectedIds.length > 0 && <div className="selection-bar"><div><Check size={17} /><span>已锁定 <strong>{selectedIds.length}</strong> 场目标</span></div><button className="button button--primary button--small" onClick={() => { setEditingTask(null); setDrawerOpen(true); }}>配置规则<ChevronRight size={16} /></button></div>}
           </div>
         </section>}
