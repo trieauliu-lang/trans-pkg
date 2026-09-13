@@ -29,6 +29,30 @@ test('repeated and concurrent reads share one upstream request', async () => {
   assert.equal(calls, 1);
 });
 
+test('task reads require data newer than their previous successful check', async () => {
+  let calls = 0;
+  let clock = Date.parse('2026-09-11T20:00:00.000Z');
+  const previousFetchedAt = new Date(clock - 60_000).toISOString();
+  const cache = createFixtureCache({
+    initial: { today: { data: [fixture('1H')], fetchedAt: previousFetchedAt } },
+    now: () => clock,
+    loader: async () => {
+      calls += 1;
+      return { data: [fixture('HT')] };
+    },
+  });
+
+  const fresh = await cache.get('today', { newerThan: previousFetchedAt });
+  assert.equal(fresh.source, 'api');
+  assert.equal(fresh.data[0].fixture.status.short, 'HT');
+  assert.equal(calls, 1);
+
+  clock += 30_000;
+  const sharedFresh = await cache.get('today', { newerThan: previousFetchedAt });
+  assert.equal(sharedFresh.source, 'cache');
+  assert.equal(calls, 1);
+});
+
 test('browser reads protect remaining quota while task reads may use the reserve', async () => {
   let calls = 0;
   let clock = Date.parse('2026-09-11T10:00:00.000Z');

@@ -32,11 +32,13 @@ export function createFixtureCache({ loader, initial = {}, persist = () => {}, n
     const ttlMs = fixtureCacheTtl(cached.data, now(), liveTtlMs);
     return { ...cached, source: 'cache', ageMs, ttlMs, stale: ageMs >= ttlMs };
   }
-  async function get(key, { allowStale = false, protectQuota = false, quotaReserve = 10 } = {}) {
+  async function get(key, { allowStale = false, protectQuota = false, quotaReserve = 10, newerThan = null } = {}) {
     const cached = entries.get(key);
     const ageMs = cached ? Math.max(0, now() - Date.parse(cached.fetchedAt)) : Infinity;
     const ttlMs = cached ? fixtureCacheTtl(cached.data, now(), liveTtlMs) : 0;
-    if (cached && ageMs < ttlMs) return { ...cached, source: 'cache', ageMs, ttlMs, stale: false };
+    const newerThanMs = newerThan ? Date.parse(newerThan) : NaN;
+    const cacheIsNewer = !Number.isFinite(newerThanMs) || Date.parse(cached?.fetchedAt) > newerThanMs;
+    if (cached && ageMs < ttlMs && cacheIsNewer) return { ...cached, source: 'cache', ageMs, ttlMs, stale: false };
     if (protectQuota && cached?.quota?.remaining != null && Number(cached.quota.remaining) <= quotaReserve) {
       return { ...cached, source: 'cache', ageMs, ttlMs, stale: true, quotaProtected: true };
     }

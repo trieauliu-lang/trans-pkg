@@ -180,7 +180,9 @@ async function getTaskFixtures(task) {
     task.providerId = profile.provider;
   }
   if (!profile) throw new Error('任务所需的 API 平台尚未配置 Key');
-  const result = await fixtureCache.get(fixtureCacheKey(profile, monitorDate));
+  const result = await fixtureCache.get(fixtureCacheKey(profile, monitorDate), {
+    newerThan: task.lastSucceededAt,
+  });
   const returned = new Map(result.data.filter((item) => selectedIds.has(String(item.fixture.id))).map((item) => [String(item.fixture.id), item]));
   const fixtures = task.fixtures.map((previous) => returned.get(String(previous.fixture.id))
     || (TERMINAL_STATUSES.has(previous.fixture.status.short) ? previous : null)).filter(Boolean);
