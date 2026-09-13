@@ -1059,7 +1059,7 @@ export default function App() {
     <div className="app-shell">
       <header className="topbar">
         <button className="brand" type="button" onClick={() => navigatePage('fixtures')} aria-label="比分提醒首页"><span className="brand__mark"><Activity size={19} /></span><span>比分提醒</span></button>
-        <nav className="topbar__nav" aria-label="页面导航"><button className={activePage === 'fixtures' ? 'is-active' : ''} onClick={() => navigatePage('fixtures')}>查询比赛</button><button className={activePage === 'monitor' ? 'is-active' : ''} onClick={() => navigatePage('monitor')}>监控管理</button></nav>
+        <nav className="topbar__nav" aria-label="页面导航"><button className={activePage === 'fixtures' ? 'is-active' : ''} aria-current={activePage === 'fixtures' ? 'page' : undefined} onClick={() => navigatePage('fixtures')}>比赛</button><button className={activePage === 'monitor' ? 'is-active' : ''} aria-current={activePage === 'monitor' ? 'page' : undefined} onClick={() => navigatePage('monitor')}>监控</button></nav>
         <div className="topbar__actions">
           <button className={`api-state ${health.activeApiKeyStatus === 'error' || activeApiKeyProfile?.usageLevel === 'danger' ? 'api-state--error' : activeApiKeyProfile?.usageLevel === 'warning' ? 'api-state--warning' : health.apiConfigured ? 'api-state--live' : ''}`} onClick={openApiKeySettings} title="管理、测试和切换比分 API">{health.activeApiKeyStatus === 'error' || ['warning', 'danger'].includes(activeApiKeyProfile?.usageLevel) ? <Zap size={16} /> : <KeyRound size={16} />}<span>{health.apiConfigured ? `${health.providerLabel || 'API'} ${health.apiKeyHint || '已配置'}${health.activeApiKeyStatus === 'error' ? ' · 异常' : activeApiKeyProfile?.usageLevel === 'danger' ? ' · 额度紧张' : activeApiKeyProfile?.usageLevel === 'warning' ? ' · 用量预警' : ''}${health.apiKeyCount > 1 ? ` · ${health.apiKeyCount} 个` : ''}` : '导入 API Key'}</span></button>
           <button className={`sound-control ${soundEnabled ? 'sound-control--on' : ''}`} onClick={() => enableSound(true)} title={soundReady ? '提醒声音已解锁' : '声音默认开启，首次点击页面后自动就绪'}><Volume2 size={17} />{soundReady ? '声音已就绪' : '声音已开启'}</button>
@@ -1085,9 +1085,8 @@ export default function App() {
       <main id="top" className={`workspace ${activePage === 'fixtures' ? 'workspace--full' : ''}`}>
         <section className="page-header">
           <div className="page-header__copy">
-            <p className="section-caption">比赛比分提醒</p>
-            <h1>{activePage === 'fixtures' ? '查询比赛' : '监控管理'}</h1>
-            <p>{activePage === 'fixtures' ? '查询并选择比赛，已有查询结果会从缓存自动恢复。' : '查看任务状态、多个监控指标与实时提醒记录。'}</p>
+            <h1>{activePage === 'fixtures' ? `${monitorDateLabel(date)}，选择比赛` : runningCount ? `${runningCount} 个任务正在监控` : '监控任务'}</h1>
+            <p>{activePage === 'fixtures' ? '选定比赛后，再设置清楚的判断时机和提醒条件。' : '状态、判断规则和提醒记录集中在这里。'}</p>
           </div>
           <dl className="summary-list">
             <div><dt>进行中的任务</dt><dd>{runningCount}</dd></div>
@@ -1101,7 +1100,7 @@ export default function App() {
         {activePage === 'fixtures' && <section className="content-grid" id="fixtures">
           <div className="fixture-browser">
             <div className="section-heading">
-              <div className="section-heading__copy"><span className="section-index">1</span><div><h2>选择{monitorDateLabel(date)}的比赛</h2><p>{date} · 共 {visibleFixtures.length} 场{translationCoverage.total ? ` · 中文队名 ${translationCoverage.translated}/${translationCoverage.total}` : ''}{fixtureMeta.quota?.remaining != null ? ` · 今日剩余 ${fixtureMeta.quota.remaining}/${fixtureMeta.quota.limit}` : ''}{fixtureMeta.cache ? ` · ${fixtureMeta.cache.source === 'api' ? '刚从 API 更新' : '已使用服务端缓存'}` : ''}</p></div></div>
+              <div className="section-heading__copy"><div><h2>当天赛程</h2><p>{date} · 共 {visibleFixtures.length} 场{translationCoverage.total ? ` · 中文队名 ${translationCoverage.translated}/${translationCoverage.total}` : ''}{fixtureMeta.quota?.remaining != null ? ` · 今日剩余 ${fixtureMeta.quota.remaining}/${fixtureMeta.quota.limit}` : ''}{fixtureMeta.cache ? ` · ${fixtureMeta.cache.source === 'api' ? '刚从 API 更新' : '已使用服务端缓存'}` : ''}</p></div></div>
               <div className="fixture-browser__tools">
                 <div className="date-shortcuts">
                   {[0, 1, 2].map((days) => {
