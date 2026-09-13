@@ -49,6 +49,20 @@ test('uses provider quota to classify API key usage warnings', () => {
   assert.equal(profile.usageLevel, 'danger');
 });
 
+test('records the API-Football quota refresh time when remaining requests increase', () => {
+  let settings = addApiKey({ apiKeys: [], activeApiKeyId: null }, 'quota-reset-key', '重置检测');
+  const id = settings.activeApiKeyId;
+  settings = updateApiKeyQuota(settings, id, { limit: '100', remaining: '4' }, '2026-09-13T15:59:00.000Z');
+  assert.equal(publicApiKeySettings(settings).apiKeys[0].quotaResetAt, null);
+  settings = updateApiKeyQuota(settings, id, { limit: '100', remaining: '99' }, '2026-09-13T16:01:00.000Z');
+  let profile = publicApiKeySettings(settings).apiKeys[0];
+  assert.equal(profile.quotaResetAt, '2026-09-13T16:01:00.000Z');
+  assert.equal(profile.providerUsed, 1);
+  settings = updateApiKeyQuota(settings, id, { limit: '100', remaining: '98' }, '2026-09-13T16:02:00.000Z');
+  profile = publicApiKeySettings(settings).apiKeys[0];
+  assert.equal(profile.quotaResetAt, '2026-09-13T16:01:00.000Z');
+});
+
 test('task API key binding stays fixed when the active key changes', () => {
   let settings = addApiKey({ apiKeys: [], activeApiKeyId: null }, 'first-key', '第一组');
   const fixedId = settings.activeApiKeyId;

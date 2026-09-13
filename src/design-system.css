@@ -145,6 +145,10 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
 .api-usage-history small { font-size: 10px; }
 .api-usage-history table { font-size: 10px; }
 .api-usage-history .api-usage-remaining { border-radius: 7px; }
+.api-usage-cycle { display: grid !important; grid-template-columns: auto minmax(0,1fr); align-items: baseline; gap: 3px 10px !important; margin: -1px 0 10px !important; padding: 0 2px; }
+.api-usage-cycle > span { color: var(--muted); font-size: 10px; }
+.api-usage-cycle > strong { color: var(--ink); font-size: 10px; text-align: right; }
+.api-usage-cycle > small { grid-column: 1/-1; color: var(--muted); font-size: 9px; white-space: normal; }
 .task-detail { margin-top: 0; padding: 20px; }
 .task-detail__header h2 { font-size: 23px; font-weight: 600; }
 .task-detail__header p { font-size: 11px; }
