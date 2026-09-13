@@ -50,6 +50,22 @@ const FINISHED = new Set(['FT', 'AET', 'PEN']);
 const TERMINAL = new Set(['FT', 'AET', 'PEN', 'CANC', 'ABD', 'AWD', 'WO', 'PST', 'SUSP']);
 const DEFAULT_AUDIO_URL = '/default-alert.mp3';
 const DEFAULT_AUDIO_NAME = '刘欢 - 好汉歌';
+const KICKOFF_PERIODS = [
+  { id: 'all', label: '全部' },
+  { id: 'early', label: '凌晨', start: 0, end: 6 },
+  { id: 'morning', label: '上午', start: 6, end: 12 },
+  { id: 'afternoon', label: '下午', start: 12, end: 18 },
+  { id: 'evening', label: '晚间', start: 18, end: 24 },
+];
+
+function shanghaiKickoffHour(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  const hour = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Shanghai', hour: '2-digit', hourCycle: 'h23' })
+    .formatToParts(date)
+    .find((part) => part.type === 'hour')?.value;
+  return hour == null ? null : Number(hour);
+}
 
 function compactFixture(fixture) {
   return {
@@ -203,7 +219,7 @@ function EmptyState({ onCreate }) {
   );
 }
 
-function MatchCard({ fixture, selected, onToggle, onTranslate, compact = false, translations = {} }) {
+function MatchCard({ fixture, selected, onToggle, onTranslate, compact = false, translations = {}, focused = false, anchorFixtureId = null }) {
   const live = ['1H', '2H', 'HT', 'ET'].includes(fixture.fixture.status.short);
   const finished = FINISHED.has(fixture.fixture.status.short);
   const homeOriginal = fixture.teams.home.name;
@@ -211,7 +227,7 @@ function MatchCard({ fixture, selected, onToggle, onTranslate, compact = false, 
   const homeName = translations[homeOriginal] || fixture.teams.home.zhName || homeOriginal;
   const awayName = translations[awayOriginal] || fixture.teams.away.zhName || awayOriginal;
   return (
-    <div className="match-card-wrap">
+    <div className={`match-card-wrap ${focused ? 'match-card-wrap--focused' : ''}`} data-task-fixture-id={anchorFixtureId == null ? undefined : String(anchorFixtureId)}>
       <button
         type="button"
         className={`match-card ${selected ? 'match-card--selected' : ''} ${compact ? 'match-card--compact' : ''}`}
@@ -219,7 +235,7 @@ function MatchCard({ fixture, selected, onToggle, onTranslate, compact = false, 
         aria-pressed={selected}
       >
       <div className="match-card__topline">
-        <span>{fixture.league.name}</span>
+        <span>{fixture.league.name}{fixture.league.country ? ` · ${fixture.league.country}` : ''}</span>
         <span className={live ? 'live-copy' : ''}>{live && <i />}{fixtureStatus(fixture)}</span>
       </div>
       <div className="match-card__scoreboard">
@@ -289,7 +305,7 @@ function ReminderHistoryPanel({ groups, unreadCount, tasks, translations, onSele
         <section className="reminder-day" key={group.day}>
           <div className="reminder-day__heading"><strong>{reminderDateLabel(group.day)}</strong><span>{group.reminders.length} 条</span></div>
           <div className="reminder-day__events">{group.reminders.map((event) => (
-            <button type="button" className={`reminder-event ${event.unread ? 'reminder-event--unread' : ''}`} key={event.reminderId} onClick={() => onSelectTask(event.taskId)}>
+            <button type="button" className={`reminder-event ${event.unread ? 'reminder-event--unread' : ''}`} key={event.reminderId} onClick={() => onSelectTask(event.taskId, event.fixtureId)} title="查看对应监控比赛">
               <span className="reminder-event__icon"><BellRing size={13} /></span>
               <span className="reminder-event__copy"><strong>{event.taskName}</strong><small>{formatDateTime(event.triggeredAt, false)}</small><p>{translatedReminderMessage(event.message, tasks.find((task) => task.id === event.taskId)?.fixtures, translations)}</p></span>
               <ChevronRight size={14} />
@@ -438,7 +454,7 @@ function CreateTaskPanel({ fixtures, selectedIds, setSelectedIds, monitorDate, t
   );
 }
 
-function TaskDetail({ task, translations, apiKeys = [], onAction, onEdit }) {
+function TaskDetail({ task, translations, apiKeys = [], onAction, onEdit, focusedFixtureId = null }) {
   if (!task) return null;
   const meta = STATUS_META[task.status] || STATUS_META.stopped;
   const rules = normalizedTaskRules(task);
@@ -481,7 +497,7 @@ function TaskDetail({ task, translations, apiKeys = [], onAction, onEdit }) {
         {task.error ? '当前展示历史比分 · ' : '比分更新时间 · '}{task.lastSucceededAt ? formatDateTime(task.lastSucceededAt) : '暂无成功更新记录'}
       </p>
       <div className="task-fixtures">
-        {task.fixtures.map((fixture) => <MatchCard key={fixture.fixture.id} fixture={fixture} compact translations={translations} selected={fixture.fixture.id === task.triggerFixtureId} />)}
+        {task.fixtures.map((fixture) => <MatchCard key={fixture.fixture.id} fixture={fixture} compact translations={translations} selected={fixture.fixture.id === task.triggerFixtureId} anchorFixtureId={fixture.fixture.id} focused={String(fixture.fixture.id) === String(focusedFixtureId)} />)}
       </div>
       {task.error && <div className="error-banner" role="alert"><Zap size={18} /><div><strong>比分更新失败{task.errorCode ? ` · ${task.errorCode}` : ''}</strong><p>{task.error === 'fetch failed' ? '无法连接比分服务，请检查服务器网络或代理设置。' : task.error}</p><p>{task.status === 'error' ? `连续失败 ${task.consecutiveFailures || 1} 次 · 将于 ${formatDateTime(task.nextCheckAt)} 自动重试，也可点击“立即重试”。` : '任务已停止，可再次启动检查连接。'}</p></div></div>}
     </section>
@@ -497,10 +513,12 @@ export default function App() {
   const [fixtureMeta, setFixtureMeta] = useState(initialFixtureSnapshot?.meta || { cache: null, quota: null });
   const [hasQueriedFixtures, setHasQueriedFixtures] = useState(Boolean(initialFixtureSnapshot?.queried));
   const [activeTaskId, setActiveTaskId] = useState(null);
+  const [focusedFixture, setFocusedFixture] = useState(null);
   const [selectedIds, setSelectedIds] = useState([]);
   const [date, setDate] = useState(initialFixtureSnapshot?.date || localDateValue());
   const [fixtureSearch, setFixtureSearch] = useState('');
   const [untranslatedOnly, setUntranslatedOnly] = useState(false);
+  const [kickoffPeriod, setKickoffPeriod] = useState('all');
   const [visibleCount, setVisibleCount] = useState(24);
   const [loadingFixtures, setLoadingFixtures] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -542,8 +560,14 @@ export default function App() {
   const runningCount = tasks.filter((task) => ['running', 'scheduled'].includes(task.status)).length;
   const visibleFixtures = useMemo(() => {
     const keyword = fixtureSearch.trim().toLocaleLowerCase();
+    const period = KICKOFF_PERIODS.find((item) => item.id === kickoffPeriod);
     return fixtures
       .filter((fixture) => !untranslatedOnly || !hasChineseTeamName(fixture.teams.home, teamTranslations) || !hasChineseTeamName(fixture.teams.away, teamTranslations))
+      .filter((fixture) => {
+        if (period?.start == null) return true;
+        const hour = shanghaiKickoffHour(fixture.fixture.date);
+        return hour != null && hour >= period.start && hour < period.end;
+      })
       .filter((fixture) => !keyword || [
         fixture.league.name,
         fixture.league.country,
@@ -554,24 +578,8 @@ export default function App() {
       ]
         .some((value) => value?.toLocaleLowerCase().includes(keyword)))
       .sort((left, right) => Date.parse(left.fixture.date) - Date.parse(right.fixture.date));
-  }, [fixtures, fixtureSearch, untranslatedOnly, teamTranslations]);
+  }, [fixtures, fixtureSearch, untranslatedOnly, kickoffPeriod, teamTranslations]);
   const displayedFixtures = useMemo(() => visibleFixtures.slice(0, visibleCount), [visibleFixtures, visibleCount]);
-  const displayedFixtureGroups = useMemo(() => {
-    const groups = new Map();
-    displayedFixtures.forEach((fixture) => {
-      const key = `${fixture.provider || 'provider'}:${fixture.league?.id || fixture.league?.name || 'league'}`;
-      if (!groups.has(key)) {
-        groups.set(key, {
-          key,
-          name: fixture.league?.name || '其他比赛',
-          country: fixture.league?.country || '',
-          fixtures: [],
-        });
-      }
-      groups.get(key).fixtures.push(fixture);
-    });
-    return [...groups.values()];
-  }, [displayedFixtures]);
   const translationCoverage = useMemo(() => {
     const teams = new Map();
     fixtures.forEach((fixture) => [fixture.teams.home, fixture.teams.away].forEach((team) => teams.set(team.name, team)));
@@ -831,12 +839,17 @@ export default function App() {
     setTasks(body.tasks || []);
   }
 
-  function selectTask(taskId) {
+  function selectTask(taskId, fixtureId = null) {
     const selectedTask = tasks.find((task) => task.id === taskId);
+    const requestedAt = Date.now();
+    setFocusedFixture(fixtureId == null ? null : { taskId, fixtureId: String(fixtureId), requestedAt });
+    if (fixtureId != null) window.setTimeout(() => setFocusedFixture((current) => current?.requestedAt === requestedAt ? null : current), 4000);
     setActiveTaskId(taskId);
     navigatePage('monitor');
     window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
-      document.getElementById('task-detail')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      const fixtureTarget = fixtureId == null ? null : [...document.querySelectorAll('[data-task-fixture-id]')]
+        .find((element) => element.dataset.taskFixtureId === String(fixtureId));
+      (fixtureTarget || document.getElementById('task-detail'))?.scrollIntoView({ behavior: 'smooth', block: fixtureTarget ? 'center' : 'start' });
     }));
     if (!selectedTask || !unreadReminderCount(selectedTask)) return;
     const acknowledgedAt = latestReminderAt(selectedTask);
@@ -995,7 +1008,7 @@ export default function App() {
     };
   }, []);
 
-  useEffect(() => { setVisibleCount(24); }, [date, fixtureSearch, untranslatedOnly]);
+  useEffect(() => { setVisibleCount(24); }, [date, fixtureSearch, untranslatedOnly, kickoffPeriod]);
 
   useEffect(() => {
     const candidates = [...displayedFixtures, ...(activeTask?.fixtures || [])]
@@ -1119,9 +1132,9 @@ export default function App() {
               <div className="section-heading__copy"><div><h2>当天赛程</h2><p>{date} · 共 {visibleFixtures.length} 场{translationCoverage.total ? ` · 中文队名 ${translationCoverage.translated}/${translationCoverage.total}` : ''}{fixtureMeta.quota?.remaining != null ? ` · 今日剩余 ${fixtureMeta.quota.remaining}/${fixtureMeta.quota.limit}` : ''}{fixtureMeta.cache ? ` · ${fixtureMeta.cache.source === 'api' ? '刚从 API 更新' : '已使用服务端缓存'}` : ''}</p></div></div>
               <div className="fixture-browser__tools">
                 <div className="date-shortcuts">
-                  {[0, 1, 2].map((days) => {
+                  {[0, 1].map((days) => {
                     const value = shiftedDateValue(days);
-                    return <button key={value} className={date === value ? 'is-active' : ''} onClick={() => chooseDate(value)}>{['今天', '明天', '后天'][days]}</button>;
+                    return <button key={value} className={date === value ? 'is-active' : ''} onClick={() => chooseDate(value)}>{['今天', '明天'][days]}</button>;
                   })}
                 </div>
                 <label className="date-picker"><CalendarDays size={16} /><input type="date" min={localDateValue()} value={date} onChange={(event) => chooseDate(event.target.value)} /></label>
@@ -1129,16 +1142,16 @@ export default function App() {
               </div>
             </div>
             <div className="filter-row">
-              <button className={`filter-chip ${untranslatedOnly ? 'filter-chip--active' : ''}`} onClick={() => setUntranslatedOnly((value) => !value)}><Pencil size={13} />仅看未翻译</button>
               <label className="fixture-search"><Search size={14} /><input value={fixtureSearch} onChange={(event) => setFixtureSearch(event.target.value)} placeholder="搜索球队或联赛" aria-label="搜索球队或联赛" /></label>
-              <span>{selectedIds.length} 场已选择</span>
+              <div className="kickoff-filter" aria-label="按开赛时段筛选"><span><Clock3 size={13} />开赛时段</span><div>{KICKOFF_PERIODS.map((period) => <button type="button" key={period.id} className={kickoffPeriod === period.id ? 'is-active' : ''} aria-pressed={kickoffPeriod === period.id} onClick={() => setKickoffPeriod(period.id)}>{period.label}</button>)}</div></div>
+              <div className="filter-row__meta"><button className={`filter-chip ${untranslatedOnly ? 'filter-chip--active' : ''}`} onClick={() => setUntranslatedOnly((value) => !value)}><Pencil size={13} />仅看未翻译</button><span>{selectedIds.length} 场已选择</span></div>
             </div>
-            {loadingFixtures ? <div className="loading-state"><LoaderCircle className="spin" /><span>正在查询比赛…</span></div> : visibleFixtures.length ? <><div className="league-list">{displayedFixtureGroups.map((group) => <section className="league-group" key={group.key}><header className="league-group__header"><div><h3>{group.name}</h3>{group.country && <span>{group.country}</span>}</div><strong>{group.fixtures.length} 场</strong></header><div className="fixture-list">{group.fixtures.map((fixture) => <MatchCard key={fixture.fixture.id} fixture={fixture} translations={teamTranslations} selected={selectedIds.includes(fixture.fixture.id)} onToggle={toggleFixture} onTranslate={editTeamTranslation} />)}</div></section>)}</div>{visibleCount < visibleFixtures.length && <button className="load-more" onClick={() => setVisibleCount((count) => count + 24)}>显示更多比赛（剩余 {visibleFixtures.length - visibleCount} 场）</button>}</> : <div className="loading-state"><Search /><span>{hasQueriedFixtures ? '没有找到符合条件的比赛' : '选择日期后点击“查询比赛”，页面不会自动消耗 API 额度'}</span></div>}
+            {loadingFixtures ? <div className="loading-state"><LoaderCircle className="spin" /><span>正在查询比赛…</span></div> : visibleFixtures.length ? <><div className="fixture-card-grid">{displayedFixtures.map((fixture) => <MatchCard key={fixture.fixture.id} fixture={fixture} translations={teamTranslations} selected={selectedIds.includes(fixture.fixture.id)} onToggle={toggleFixture} onTranslate={editTeamTranslation} />)}</div>{visibleCount < visibleFixtures.length && <button className="load-more" onClick={() => setVisibleCount((count) => count + 24)}>显示更多比赛（剩余 {visibleFixtures.length - visibleCount} 场）</button>}</> : <div className="loading-state"><Search /><span>{hasQueriedFixtures ? '没有找到符合条件的比赛' : '选择日期后点击“查询比赛”，页面不会自动消耗 API 额度'}</span></div>}
             {selectedIds.length > 0 && <div className="selection-bar"><div><Check size={17} /><span>已锁定 <strong>{selectedIds.length}</strong> 场目标</span></div><button className="button button--primary button--small" onClick={() => { setEditingTask(null); setDrawerOpen(true); }}>配置规则<ChevronRight size={16} /></button></div>}
           </div>
         </section>}
 
-        {activePage === 'monitor' && <div className="monitor-management-grid"><div className="monitor-management-grid__main">{apiKeys.length > 0 && <section className="api-usage-dashboard"><div className="api-usage-dashboard__heading"><div><p className="section-caption">统一 API 用量</p><h2>今日真实请求 {apiKeys.reduce((total, item) => total + Number(item.todayUsage?.total || 0), 0)} 次</h2></div><button className="button button--secondary button--small" onClick={openApiKeySettings}><KeyRound size={15} />管理 Key</button></div><div className="api-usage-dashboard__grid">{apiKeys.map((item) => <ApiUsageHistory key={item.id} item={item} />)}</div></section>}{activeTask ? <TaskDetail task={activeTask} translations={teamTranslations} apiKeys={apiKeys} onAction={taskAction} onEdit={beginEditTask} /> : <EmptyState onCreate={() => navigatePage('fixtures')} />}</div><ReminderHistoryPanel groups={reminderGroups} unreadCount={totalUnreadReminders} tasks={tasks} translations={teamTranslations} onSelectTask={selectTask} /></div>}
+        {activePage === 'monitor' && <div className="monitor-management-grid"><div className="monitor-management-grid__main">{apiKeys.length > 0 && <section className="api-usage-dashboard"><div className="api-usage-dashboard__heading"><div><p className="section-caption">统一 API 用量</p><h2>今日真实请求 {apiKeys.reduce((total, item) => total + Number(item.todayUsage?.total || 0), 0)} 次</h2></div><button className="button button--secondary button--small" onClick={openApiKeySettings}><KeyRound size={15} />管理 Key</button></div><div className="api-usage-dashboard__grid">{apiKeys.map((item) => <ApiUsageHistory key={item.id} item={item} />)}</div></section>}{activeTask ? <TaskDetail task={activeTask} translations={teamTranslations} apiKeys={apiKeys} onAction={taskAction} onEdit={beginEditTask} focusedFixtureId={focusedFixture?.taskId === activeTask.id ? focusedFixture.fixtureId : null} /> : <EmptyState onCreate={() => navigatePage('fixtures')} />}</div><ReminderHistoryPanel groups={reminderGroups} unreadCount={totalUnreadReminders} tasks={tasks} translations={teamTranslations} onSelectTask={selectTask} /></div>}
       </main>
 
       {drawerOpen && <CreateTaskPanel fixtures={fixtures} selectedIds={selectedIds} setSelectedIds={setSelectedIds} monitorDate={date} translations={teamTranslations} apiKeys={apiKeys} task={editingTask} onClose={() => { setDrawerOpen(false); setEditingTask(null); }} onError={showToast} onArmSound={() => enableSound(false)} onCreated={(task) => { const edited = Boolean(editingTask); setDrawerOpen(false); setEditingTask(null); setSelectedIds([]); setActiveTaskId(task.id); navigatePage('monitor'); loadTasks(); showToast(edited ? '监控任务已更新' : '监控任务已创建，声音提醒已启用'); }} />}

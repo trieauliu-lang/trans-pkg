@@ -13,7 +13,7 @@ const tasks = [{
 }, {
   id: 'task-b',
   name: '早场提醒',
-  triggerHistory: [{ key: 'third', message: '第三次提醒', triggeredAt: '2026-09-13T01:00:00.000Z' }],
+  triggerHistory: [{ key: 'third', fixtureId: 'fixture-9', message: '第三次提醒', triggeredAt: '2026-09-13T01:00:00.000Z' }],
 }];
 
 test('counts only reminders newer than the task acknowledgement', () => {
@@ -28,6 +28,7 @@ test('groups all task reminders by Shanghai calendar day and sorts newest first'
   assert.deepEqual(groups.map((group) => group.day), ['2026-09-13', '2026-09-12']);
   assert.deepEqual(groups[0].reminders.map((event) => event.taskId), ['task-b', 'task-a']);
   assert.deepEqual(groups[0].reminders.map((event) => event.unread), [true, true]);
+  assert.equal(groups[0].reminders[0].fixtureId, 'fixture-9');
   assert.equal(groups.flatMap((group) => group.reminders).length, 3);
 });
 
