@@ -34,7 +34,9 @@ function validScorePair(score) {
 
 function halftimeSnapshot(item) {
   const status = item.fixture.status.short;
-  const score = HALFTIME_REACHED_STATUSES.has(status) ? item.goals : item.score?.halftime;
+  const score = HALFTIME_REACHED_STATUSES.has(status)
+    ? item.goals
+    : HALFTIME_PASSED_STATUSES.has(status) ? item.score?.halftime : null;
   if (!validScorePair(score)) return null;
   return { ...item, goals: { home: Number(score.home), away: Number(score.away) } };
 }
@@ -175,6 +177,7 @@ export function evaluateTaskRules(task, fixtures, triggeredRuleKeys = [], comple
   let halftimeEvaluated = 0;
   let halftimeMissed = 0;
   let halftimePendingBackfill = 0;
+  let halftimeWaiting = 0;
 
   taskRules(task).forEach((rule, index) => {
     const normalizedRule = { ...rule, id: String(rule.id || `rule-${index + 1}`) };
@@ -204,6 +207,8 @@ export function evaluateTaskRules(task, fixtures, triggeredRuleKeys = [], comple
         } else if (targets.some((item) => HALFTIME_REACHED_STATUSES.has(item.fixture.status.short)
           || HALFTIME_PASSED_STATUSES.has(item.fixture.status.short))) {
           halftimePendingBackfill += 1;
+        } else {
+          halftimeWaiting += 1;
         }
         return;
       }
@@ -226,6 +231,8 @@ export function evaluateTaskRules(task, fixtures, triggeredRuleKeys = [], comple
           halftimeMissed += 1;
         } else if (HALFTIME_REACHED_STATUSES.has(status) || HALFTIME_PASSED_STATUSES.has(status)) {
           halftimePendingBackfill += 1;
+        } else {
+          halftimeWaiting += 1;
         }
       });
       return;
@@ -259,6 +266,7 @@ export function evaluateTaskRules(task, fixtures, triggeredRuleKeys = [], comple
       ? `${matches.length} 个新条件已满足：${matches.map((match) => match.message).join('；')}`
       : halftimeMissed ? '比赛已经结束，但接口未提供可用半场比分，无法补判'
         : halftimePendingBackfill ? '比赛已到中场或下半场，等待接口提供半场比分后补判'
+        : halftimeWaiting ? '仍有比赛尚未进入中场，继续监控'
         : halftimeEvaluated ? '已按中场比分判断，条件未满足，不提醒'
           : eligibleCount ? '持续监控中，暂无新的指标满足' : '等待比赛进入规则判断阶段',
   };

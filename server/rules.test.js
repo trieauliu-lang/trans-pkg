@@ -107,6 +107,16 @@ test('直接看到下半场时等待半场比分，不提前完成规则', () =>
   assert.match(result.reason, /等待接口提供半场比分后补判/);
 });
 
+test('上半场接口提前填充 halftime 字段时不得提前判断', () => {
+  const task = { rules: [{ id: 'trailing', fixtureId: 'all', evaluateWhen: 'halftime', metric: 'home_trailing', matchScope: 'any' }] };
+  const first = fixture(1, 'HT', 1, 0, { home: 1, away: 0 });
+  const stillFirstHalf = fixture(2, '1H', 2, 0, { home: 2, away: 0 });
+  const result = evaluateTaskRules(task, [first, stillFirstHalf]);
+  assert.deepEqual(result.completedRuleKeys, ['trailing:1']);
+  assert.match(result.reason, /仍有比赛尚未进入中场，继续监控/);
+  assert.equal(taskMonitoringComplete({ ...task, completedRuleKeys: result.completedRuleKeys }, [first, stillFirstHalf]), false);
+});
+
 test('下半场或完场后按明确半场比分补判且只执行一次', () => {
   const task = { rules: [{ id: 'trailing', fixtureId: '1', evaluateWhen: 'halftime', metric: 'home_trailing' }] };
   const result = evaluateTaskRules(task, [fixture(1, '2H', 2, 2, { home: 0, away: 1 })]);
