@@ -66,6 +66,7 @@ function readTasks() {
       return {
         ...task,
         intervalMinutes: normalizeMonitorInterval(task.intervalMinutes),
+        completedRuleKeys: Array.isArray(task.completedRuleKeys) ? task.completedRuleKeys : [],
         lastAcknowledgedTriggerAt: Object.hasOwn(task, 'lastAcknowledgedTriggerAt')
           ? task.lastAcknowledgedTriggerAt
           : previousLatestReminder,
@@ -217,7 +218,7 @@ async function runTask(task) {
     const { fixtures } = fixtureResult;
     if (!isCurrent()) return;
     enforceLowQuotaFrequency(fixtureResult.apiKeyId, fixtureResult.quota, now);
-    const result = evaluateTaskRules(task, fixtures, task.triggeredRuleKeys || []);
+    const result = evaluateTaskRules(task, fixtures, task.triggeredRuleKeys || [], task.completedRuleKeys || []);
     task.fixtures = fixtures;
     task.lastCheckedAt = now;
     task.lastSucceededAt = fixtureResult.fetchedAt || new Date().toISOString();
@@ -230,6 +231,7 @@ async function runTask(task) {
     task.errorCode = null;
     task.lastMessage = result.reason;
     task.error = null;
+    task.completedRuleKeys = result.completedRuleKeys || task.completedRuleKeys || [];
     if (result.matches.length) {
       task.triggeredRuleKeys = [...new Set([...(task.triggeredRuleKeys || []), ...result.matches.map((match) => match.key)])];
       task.triggerHistory = [...(task.triggerHistory || []), ...result.matches.map((match) => ({ ...match, triggeredAt: now }))].slice(-100);
@@ -243,7 +245,7 @@ async function runTask(task) {
       task.nextCheckAt = null;
       if (!result.matches.length) task.lastMessage = allTerminal
         ? terminalTaskMessage(fixtures)
-        : '主队落后监控的比赛已结束，任务自动停止';
+        : result.reason || '规则判断时机已结束，任务自动停止';
     } else {
       task.status = 'running';
       task.nextCheckAt = nextMonitorCheckAt(task.effectiveIntervalMinutes);
@@ -483,6 +485,7 @@ app.post('/api/tasks', (request, response) => {
     lastCheckedAt: null,
     triggeredAt: null,
     triggeredRuleKeys: [],
+    completedRuleKeys: [],
     triggerHistory: [],
     triggerCount: 0,
     lastAcknowledgedTriggerAt: null,
@@ -521,6 +524,7 @@ app.put('/api/tasks/:id', (request, response) => {
     triggeredAt: resetHistory ? null : task.triggeredAt,
     triggerFixtureId: resetHistory ? null : task.triggerFixtureId,
     triggeredRuleKeys: resetHistory ? [] : (task.triggeredRuleKeys || []),
+    completedRuleKeys: resetHistory ? [] : (task.completedRuleKeys || []),
     triggerHistory: resetHistory ? [] : (task.triggerHistory || []),
     triggerCount: resetHistory ? 0 : (task.triggerCount || 0),
     lastAcknowledgedTriggerAt: resetHistory ? null : (task.lastAcknowledgedTriggerAt || null),
@@ -550,6 +554,7 @@ app.post('/api/tasks/:id/run', (request, response) => {
   task.error = null;
   if (resetTriggers) {
     task.triggeredRuleKeys = [];
+    task.completedRuleKeys = [];
     task.triggerHistory = [];
     task.triggerCount = 0;
     task.lastAcknowledgedTriggerAt = null;

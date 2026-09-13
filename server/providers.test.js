@@ -19,6 +19,11 @@ test('normalizes abnormal terminal statuses across providers', () => {
   assert.equal(normalizeTheSportsDbEvent({ idEvent: 2, dateEvent: '2026-09-11', strStatus: 'Walk Over' }).fixture.status.short, 'WO');
 });
 
+test('ambiguous live statuses without a minute remain LIVE instead of guessing a half', () => {
+  assert.equal(normalizeTheStatsMatch({ id: 1, date: '2026-09-11', status: 'live', home: {}, away: {} }).fixture.status.short, 'LIVE');
+  assert.equal(normalizeTheSportsDbEvent({ idEvent: 2, dateEvent: '2026-09-11', strStatus: 'In Play' }).fixture.status.short, 'LIVE');
+});
+
 test('API-Football tests the account status endpoint and derives daily quota', async () => {
   let requestedUrl;
   const client = createProviderClient({ providerId: 'api-football', apiKey: 'football-key', dispatcher: {}, fetchImpl: async (url) => {

@@ -44,7 +44,7 @@ const STATUS_META = {
 };
 
 const OPERATOR_LABELS = { gt: '大于', gte: '大于等于', eq: '等于', lt: '小于', lte: '小于等于' };
-const EVALUATE_WHEN_LABELS = { in_play: '比赛开始后持续判断', all_finished: '全部比赛结束后', each_finished: '每场比赛结束时', halftime: '比赛进入半场后' };
+const EVALUATE_WHEN_LABELS = { in_play: '比赛开始后持续判断', all_finished: '所选比赛全部完场后', each_finished: '每场比赛完场时', halftime: '中场休息时（仅上半场结束）' };
 const METRIC_LABELS = { total_goals: '总进球数', goal_difference: '比分差', home_leading: '主队领先客队', home_trailing: '主队落后客队' };
 const FINISHED = new Set(['FT', 'AET', 'PEN']);
 const TERMINAL = new Set(['FT', 'AET', 'PEN', 'CANC', 'ABD', 'AWD', 'WO', 'PST', 'SUSP']);
@@ -413,7 +413,7 @@ function CreateTaskPanel({ fixtures, selectedIds, setSelectedIds, monitorDate, t
                   </div>
                   <div className="field-grid">
                     <label className="field"><span>适用比赛</span><select value={rule.fixtureId} onChange={(event) => updateRule(rule.id, 'fixtureId', event.target.value)}><option value="all">所有已选比赛</option>{selectedFixtures.map((fixture) => <option key={fixture.fixture.id} value={fixture.fixture.id}>{teamDisplayName(fixture.teams.home, translations)} vs {teamDisplayName(fixture.teams.away, translations)}</option>)}</select></label>
-                    <label className="field"><span>判断时机</span><select value={rule.evaluateWhen} onChange={(event) => updateRule(rule.id, 'evaluateWhen', event.target.value)}><option value="in_play">比赛开始后持续判断</option><option value="halftime">比赛进入半场后</option><option value="each_finished">每场比赛结束时</option><option value="all_finished">全部比赛结束后</option></select></label>
+                    <label className="field"><span>判断时机</span><select value={rule.evaluateWhen} onChange={(event) => updateRule(rule.id, 'evaluateWhen', event.target.value)}><option value="in_play">比赛开始后持续判断</option><option value="halftime">中场休息时（仅上半场结束）</option><option value="each_finished">每场比赛完场时</option><option value="all_finished">所选比赛全部完场后</option></select></label>
                     {rule.fixtureId === 'all' && <label className="field"><span>多场范围</span><select value={rule.matchScope || 'any'} onChange={(event) => updateRule(rule.id, 'matchScope', event.target.value)}><option value="any">任意一场满足</option><option value="all">全部比赛同时满足</option></select></label>}
                     <label className="field"><span>监控指标</span><select value={rule.metric} onChange={(event) => updateRule(rule.id, 'metric', event.target.value)}><option value="home_leading">主队领先客队</option><option value="home_trailing">主队落后客队</option><option value="total_goals">总进球数</option><option value="goal_difference">比分差</option></select></label>
                     {!['home_leading', 'home_trailing'].includes(rule.metric) && <label className="field"><span>比较条件</span><div className="condition-fields"><select value={rule.operator} onChange={(event) => updateRule(rule.id, 'operator', event.target.value)}>{Object.entries(OPERATOR_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select><input type="number" min="0" value={rule.threshold} onChange={(event) => updateRule(rule.id, 'threshold', event.target.value)} /></div></label>}

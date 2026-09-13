@@ -26,7 +26,7 @@ export function normalizeTheStatsMatch(match) {
   const rawStatus = String(match.status || 'scheduled').toLowerCase();
   const minute = Number(match.minute ?? match.elapsed ?? 0) || null;
   let status = STATUS_MAP[rawStatus] || rawStatus.toUpperCase();
-  if (status === 'LIVE') status = minute && minute <= 45 ? '1H' : '2H';
+  if (status === 'LIVE' && minute != null) status = minute <= 45 ? '1H' : '2H';
   const competition = match.competition || {};
   const score = match.score || match.scores || {};
   const homeScore = score.home ?? score.home_score ?? home.score ?? null;
@@ -78,7 +78,7 @@ export function normalizeTheSportsDbEvent(event) {
   const elapsed = elapsedMatch ? Number(elapsedMatch[0]) : null;
   let status = SPORTS_DB_STATUS_MAP[upperStatus] || upperStatus || 'NS';
   if (String(event.strPostponed || '').toLowerCase() === 'yes') status = 'PST';
-  if (status === 'LIVE') status = elapsed && elapsed <= 45 ? '1H' : '2H';
+  if (status === 'LIVE' && elapsed != null) status = elapsed <= 45 ? '1H' : '2H';
   const score = (value) => {
     if (value == null || value === '') return null;
     const number = Number(value);
