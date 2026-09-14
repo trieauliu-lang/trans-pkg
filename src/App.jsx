@@ -35,6 +35,7 @@ import {
   writeFixtureSnapshot,
 } from './fixtureSnapshot.js';
 import { groupedReminderHistory, latestReminderAt, translatedReminderMessage, unreadReminderCount } from './reminderHistory.js';
+import { sortTasksByStatus } from './taskOrder.js';
 
 const STATUS_META = {
   scheduled: { label: '等待启动', tone: 'scheduled' },
@@ -557,7 +558,8 @@ export default function App() {
   const fixtureRestoreRequestRef = useRef(0);
   const usageWarningLevelsRef = useRef({});
 
-  const activeTask = useMemo(() => tasks.find((task) => task.id === activeTaskId) || tasks[0] || null, [tasks, activeTaskId]);
+  const orderedTasks = useMemo(() => sortTasksByStatus(tasks), [tasks]);
+  const activeTask = useMemo(() => tasks.find((task) => task.id === activeTaskId) || orderedTasks[0] || null, [tasks, orderedTasks, activeTaskId]);
   const reminderGroups = useMemo(() => groupedReminderHistory(tasks), [tasks]);
   const totalUnreadReminders = useMemo(() => tasks.reduce((count, task) => count + unreadReminderCount(task), 0), [tasks]);
   const activeApiKeyProfile = apiKeys.find((item) => item.active) || null;
@@ -1110,7 +1112,7 @@ export default function App() {
       {activePage === 'monitor' && <aside className={`sidebar ${tasks.length ? '' : 'sidebar--empty'}`} id="tasks">
         <div className="sidebar__label"><span>监控任务</span><strong>{tasks.length}</strong></div>
         <nav className="task-list" aria-label="监控任务列表">
-          {tasks.map((task) => <TaskListItem key={task.id} task={task} active={activeTask?.id === task.id} unreadCount={unreadReminderCount(task)} onClick={() => selectTask(task.id)} />)}
+          {orderedTasks.map((task) => <TaskListItem key={task.id} task={task} active={activeTask?.id === task.id} unreadCount={unreadReminderCount(task)} onClick={() => selectTask(task.id)} />)}
           {!tasks.length && <p className="sidebar__empty">暂无任务<br />从右上角创建第一个监控</p>}
         </nav>
         <div className="sound-card">
