@@ -5,6 +5,7 @@ import {
   BellRing,
   CalendarDays,
   Check,
+  ChevronDown,
   ChevronRight,
   CircleStop,
   Clock3,
@@ -267,7 +268,7 @@ function MatchCard({ fixture, selected, onToggle, onTranslate, compact = false, 
   );
 }
 
-function ApiUsageHistory({ item }) {
+function ApiUsageHistory({ item, showRemaining = true }) {
   if (!item) return null;
   const history = (item.usageHistory || []).slice(0, 7);
   const remaining = item.latestQuota?.remaining;
@@ -276,7 +277,7 @@ function ApiUsageHistory({ item }) {
   return (
     <section className={`api-usage-history api-usage-history--${item.usageLevel || 'normal'}`}>
       <div><strong>{item.label} · 最近每日用量</strong><small>{item.usagePercent != null ? `平台额度已用 ${item.usagePercent}%` : '按北京时间统计真实上游请求'}</small></div>
-      {remaining != null && <div className={`api-usage-remaining ${lowRemaining ? 'api-usage-remaining--low' : ''}`}><span>本周期剩余额度</span><strong>{remaining}</strong>{item.latestQuota?.limit != null && <em>/ {item.latestQuota.limit}</em>}<small>{lowRemaining ? '不足 25 次，任务频次已强制调整为 10 分钟' : '额度充足'}</small></div>}
+      {showRemaining && remaining != null && <div className={`api-usage-remaining ${lowRemaining ? 'api-usage-remaining--low' : ''}`}><span>本周期剩余额度</span><strong>{remaining}</strong>{item.latestQuota?.limit != null && <em>/ {item.latestQuota.limit}</em>}<small>{lowRemaining ? '不足 25 次，任务频次已强制调整为 10 分钟' : '额度充足'}</small></div>}
       {item.provider === 'api-football' && <div className="api-usage-cycle"><span>额度统计起点</span><strong>{item.quotaResetAt ? formatDateTime(item.quotaResetAt) : '等待检测下一次重置'}</strong><small>{item.quotaResetAt ? `本周期已使用 ${quotaCycleUsage ?? 0} 次；额度回升时自动刷新起点` : '首次检测到剩余额度回升时自动记录'}</small></div>}
       {history.length ? <table><thead><tr><th>日期</th><th>总请求</th><th>比赛</th><th>测试</th></tr></thead><tbody>{history.map((usage) => <tr key={usage.date}><td>{usage.date}</td><td>{usage.total}</td><td>{usage.fixtures}</td><td>{usage.tests}</td></tr>)}</tbody></table> : <p>这个 Key 暂无请求记录。</p>}
     </section>
@@ -539,6 +540,7 @@ export default function App() {
   const [apiKeyLabel, setApiKeyLabel] = useState('');
   const [apiProviderId, setApiProviderId] = useState('api-football');
   const [apiKeys, setApiKeys] = useState([]);
+  const [apiUsageExpanded, setApiUsageExpanded] = useState(false);
   const [loadingApiKeys, setLoadingApiKeys] = useState(false);
   const [savingApiKey, setSavingApiKey] = useState(false);
   const [editingApiKeyId, setEditingApiKeyId] = useState(null);
@@ -559,9 +561,14 @@ export default function App() {
   const reminderGroups = useMemo(() => groupedReminderHistory(tasks), [tasks]);
   const totalUnreadReminders = useMemo(() => tasks.reduce((count, task) => count + unreadReminderCount(task), 0), [tasks]);
   const activeApiKeyProfile = apiKeys.find((item) => item.active) || null;
+  const primaryApiKey = apiKeys[0] || null;
+  const primaryQuotaRemaining = primaryApiKey?.latestQuota?.remaining;
+  const primaryQuotaLimit = primaryApiKey?.latestQuota?.limit;
+  const primaryQuotaSummary = primaryQuotaRemaining != null
+    ? `${primaryQuotaRemaining}${primaryQuotaLimit != null ? ` / ${primaryQuotaLimit}` : ''}`
+    : '暂未获取';
   const activeFixtureScope = fixtureSnapshotScope(health.activeApiKeyId, health.providerId);
   const runningCount = tasks.filter((task) => ['running', 'scheduled'].includes(task.status)).length;
-  const currentUsageTotal = apiKeys.reduce((total, item) => total + Number(item.provider === 'api-football' && item.providerUsed != null ? item.providerUsed : item.todayUsage?.total || 0), 0);
   const visibleFixtures = useMemo(() => {
     const keyword = fixtureSearch.trim().toLocaleLowerCase();
     const period = KICKOFF_PERIODS.find((item) => item.id === kickoffPeriod);
@@ -1155,7 +1162,7 @@ export default function App() {
           </div>
         </section>}
 
-        {activePage === 'monitor' && <div className="monitor-management-grid"><div className="monitor-management-grid__main">{apiKeys.length > 0 && <section className="api-usage-dashboard"><div className="api-usage-dashboard__heading"><div><p className="section-caption">统一 API 用量</p><h2>当前统计周期请求 {currentUsageTotal} 次</h2></div><button className="button button--secondary button--small" onClick={openApiKeySettings}><KeyRound size={15} />管理 Key</button></div><div className="api-usage-dashboard__grid">{apiKeys.map((item) => <ApiUsageHistory key={item.id} item={item} />)}</div></section>}{activeTask ? <TaskDetail task={activeTask} translations={teamTranslations} apiKeys={apiKeys} onAction={taskAction} onEdit={beginEditTask} focusedFixtureId={focusedFixture?.taskId === activeTask.id ? focusedFixture.fixtureId : null} /> : <EmptyState onCreate={() => navigatePage('fixtures')} />}</div><ReminderHistoryPanel groups={reminderGroups} unreadCount={totalUnreadReminders} tasks={tasks} translations={teamTranslations} onSelectTask={selectTask} /></div>}
+        {activePage === 'monitor' && <div className="monitor-management-grid"><div className="monitor-management-grid__main">{primaryApiKey && <section className={`api-usage-dashboard ${apiUsageExpanded ? 'api-usage-dashboard--expanded' : ''}`}><div className="api-usage-dashboard__heading"><div className="api-usage-dashboard__summary"><p className="section-caption">API 用量 · {primaryApiKey.label}</p><h2>本周期剩余额度 <strong>{primaryQuotaSummary}</strong></h2></div><div className="api-usage-dashboard__actions"><button type="button" className="api-usage-dashboard__toggle" aria-expanded={apiUsageExpanded} aria-controls="primary-api-usage-details" onClick={() => setApiUsageExpanded((value) => !value)}><ChevronDown size={16} />{apiUsageExpanded ? '收起明细' : '展开明细'}</button><button className="button button--secondary button--small" onClick={openApiKeySettings}><KeyRound size={15} />管理 Key</button></div></div>{apiUsageExpanded && <div className="api-usage-dashboard__grid" id="primary-api-usage-details"><ApiUsageHistory item={primaryApiKey} showRemaining={false} /></div>}</section>}{activeTask ? <TaskDetail task={activeTask} translations={teamTranslations} apiKeys={apiKeys} onAction={taskAction} onEdit={beginEditTask} focusedFixtureId={focusedFixture?.taskId === activeTask.id ? focusedFixture.fixtureId : null} /> : <EmptyState onCreate={() => navigatePage('fixtures')} />}</div><ReminderHistoryPanel groups={reminderGroups} unreadCount={totalUnreadReminders} tasks={tasks} translations={teamTranslations} onSelectTask={selectTask} /></div>}
       </main>
 
       {drawerOpen && <CreateTaskPanel fixtures={fixtures} selectedIds={selectedIds} setSelectedIds={setSelectedIds} monitorDate={date} translations={teamTranslations} apiKeys={apiKeys} task={editingTask} onClose={() => { setDrawerOpen(false); setEditingTask(null); }} onError={showToast} onArmSound={() => enableSound(false)} onCreated={(task) => { const edited = Boolean(editingTask); setDrawerOpen(false); setEditingTask(null); setSelectedIds([]); setActiveTaskId(task.id); navigatePage('monitor'); loadTasks(); showToast(edited ? '监控任务已更新' : '监控任务已创建，声音提醒已启用'); }} />}

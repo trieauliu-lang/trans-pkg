@@ -138,8 +138,19 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
 
 .monitor-management-grid { display: grid; grid-template-columns: minmax(0,1fr) minmax(280px,340px); align-items: start; gap: 16px; padding: 16px 28px 36px; }
 .api-usage-dashboard, .task-detail, .empty-state { margin-top: 0; border-radius: 10px; background: #fff; }
-.api-usage-dashboard { margin-bottom: 16px; padding: 18px; }
-.api-usage-dashboard__heading h2 { font-size: 18px; }
+.api-usage-dashboard { margin-bottom: 16px; padding: 14px 18px; }
+.api-usage-dashboard--expanded { padding-bottom: 18px; }
+.api-usage-dashboard__heading { margin-bottom: 0; }
+.api-usage-dashboard--expanded .api-usage-dashboard__heading { margin-bottom: 12px; }
+.api-usage-dashboard__summary { min-width: 0; }
+.api-usage-dashboard__summary h2 { font-size: 16px; font-weight: 500; }
+.api-usage-dashboard__summary h2 strong { margin-left: 5px; color: var(--blue); font-size: 18px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.api-usage-dashboard__actions { display: flex; align-items: center; gap: 7px; }
+.api-usage-dashboard__toggle { min-height: 34px; display: inline-flex; align-items: center; gap: 5px; padding: 0 10px; border: 1px solid transparent; border-radius: 7px; background: transparent; color: var(--muted-bright); cursor: pointer; font-size: 11px; font-weight: 500; }
+.api-usage-dashboard__toggle:hover { border-color: var(--line); background: var(--panel-high); color: var(--ink); }
+.api-usage-dashboard__toggle svg { transition: transform 180ms ease-in-out; }
+.api-usage-dashboard__toggle[aria-expanded="true"] svg { transform: rotate(180deg); }
+.api-usage-dashboard__grid { grid-template-columns: minmax(0,1fr); }
 .api-usage-history { border-radius: 8px; background: var(--panel-high); }
 .api-usage-history strong { font-size: 12px; }
 .api-usage-history small { font-size: 10px; }
@@ -242,6 +253,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
   .task-detail__header, .monitor-beam { flex-direction: column; align-items: flex-start; }
   .task-detail__actions { flex-wrap: wrap; }
   .metric-strip, .drawer-fixtures, .field-grid, .api-usage-dashboard__grid { grid-template-columns: 1fr; }
+  .api-usage-dashboard__heading { align-items: flex-start; flex-direction: column; }
+  .api-usage-dashboard__actions { width: 100%; justify-content: space-between; }
   .metric-strip > div { border-right: 0; border-bottom: 1px solid var(--line); }
   .metric-strip > div:last-child { border-bottom: 0; }
   .api-key-item { grid-template-columns: minmax(0,1fr) auto; }
