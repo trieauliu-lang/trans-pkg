@@ -28,7 +28,10 @@
 
 要求 Node.js 20 或更高版本。
 
-macOS 本地安装包用户可直接参阅 [本地安装说明](./本地安装说明.md)，依次双击“安装本地版.command”和“启动本地版.command”。
+本地安装包用户可选择对应平台：
+
+- macOS：参阅 [macOS 本地安装说明](./本地安装说明.md)，依次双击“安装本地版.command”和“启动本地版.command”。
+- Windows：参阅 [Windows 本地安装说明](./Windows本地安装说明.md)，依次双击 `install-windows.bat` 和 `start-windows.bat`。
 
 ```bash
 npm install
