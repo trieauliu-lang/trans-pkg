@@ -26,5 +26,11 @@
   },
   "engines": {
     "node": ">=20.19.0"
+  },
+  "overrides": {
+    "http-cache-semantics": "4.3.0",
+    "proxy-addr": "2.0.8",
+    "shell-quote": "1.12.0",
+    "source-map-js": "1.2.2"
   }
 }

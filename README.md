@@ -28,6 +28,8 @@
 
 要求 Node.js 20 或更高版本。
 
+macOS 本地安装包用户可直接参阅 [本地安装说明](./本地安装说明.md)，依次双击“安装本地版.command”和“启动本地版.command”。
+
 ```bash
 npm install
 cp .env.example .env
