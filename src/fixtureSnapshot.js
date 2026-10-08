@@ -34,15 +34,19 @@ export function rememberFixtureScope(scope, storage = localStorage) {
   } catch { /* Browser storage may be disabled. */ }
 }
 
-export function readFixtureSnapshot(scope = rememberedFixtureScope(), storage = localStorage) {
+export function readFixtureSnapshot(scope = rememberedFixtureScope(), storage = localStorage, minimumDate = '') {
   if (!scope) return null;
   const snapshots = readJson(storage, SNAPSHOT_STORE_KEY, {});
   const snapshot = snapshots?.[scope];
-  if (validSnapshot(snapshot)) return snapshot;
+  if (validSnapshot(snapshot) && (!minimumDate || snapshot.date >= minimumDate)) return snapshot;
 
   const legacy = readJson(storage, LEGACY_SNAPSHOT_KEY, null);
   const rememberedScope = rememberedFixtureScope(storage);
-  return (!rememberedScope || rememberedScope === scope) && validSnapshot(legacy) ? legacy : null;
+  return (!rememberedScope || rememberedScope === scope)
+    && validSnapshot(legacy)
+    && (!minimumDate || legacy.date >= minimumDate)
+    ? legacy
+    : null;
 }
 
 export function writeFixtureSnapshot(scope, date, fixtures, meta, storage = localStorage) {

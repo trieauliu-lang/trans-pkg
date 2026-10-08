@@ -6,6 +6,9 @@ const TMT_HOST = 'tmt.tencentcloudapi.com';
 const TMT_SERVICE = 'tmt';
 const TMT_VERSION = '2018-03-21';
 const TMT_REGION = 'ap-guangzhou';
+// Tencent's default TextTranslate limit is 5 requests per second. Leave a
+// margin so second-boundary jitter and concurrent callers cannot exceed it.
+const MIN_REQUEST_INTERVAL_MS = 275;
 
 function sha256Hex(str) {
   return crypto.createHash('sha256').update(str).digest('hex');
@@ -48,6 +51,24 @@ function buildRequest({ secretId, secretKey, action, payload }) {
 }
 
 const cache = new Map();
+const inFlight = new Map();
+let requestQueue = Promise.resolve();
+let nextRequestAt = 0;
+
+function wait(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+function scheduleRequest(request) {
+  const scheduled = requestQueue.then(async () => {
+    const delay = Math.max(0, nextRequestAt - Date.now());
+    if (delay) await wait(delay);
+    nextRequestAt = Date.now() + MIN_REQUEST_INTERVAL_MS;
+    return request();
+  });
+  requestQueue = scheduled.catch(() => {});
+  return scheduled;
+}
 
 /**
  * 调用腾讯翻译 API 将英文队名翻译为中文
@@ -57,33 +78,38 @@ const cache = new Map();
 export async function translateToChinese(text) {
   if (!text) return text;
   if (cache.has(text)) return cache.get(text);
+  if (inFlight.has(text)) return inFlight.get(text);
 
   const secretId = process.env.TENCENT_SECRET_ID;
   const secretKey = process.env.TENCENT_SECRET_KEY;
   if (!secretId || !secretKey) return text;
 
-  try {
-    const { headers, body } = buildRequest({
-      secretId,
-      secretKey,
-      action: 'TextTranslate',
-      payload: { SourceText: text, Source: 'en', Target: 'zh', ProjectId: 0 },
-    });
+  const pending = scheduleRequest(async () => {
+    try {
+      const { headers, body } = buildRequest({
+        secretId,
+        secretKey,
+        action: 'TextTranslate',
+        payload: { SourceText: text, Source: 'en', Target: 'zh', ProjectId: 0 },
+      });
 
-    const res = await fetch(`https://${TMT_HOST}/`, { method: 'POST', headers, body });
-    const data = await res.json();
-    const payload = data?.Response || {};
+      const res = await fetch(`https://${TMT_HOST}/`, { method: 'POST', headers, body });
+      const data = await res.json();
+      const payload = data?.Response || {};
 
-    if (payload.Error) {
-      console.error('[i18n] 腾讯翻译 API 报错:', payload.Error.Code, '-', payload.Error.Message);
+      if (payload.Error) {
+        console.error('[i18n] 腾讯翻译 API 报错:', payload.Error.Code, '-', payload.Error.Message);
+        return text;
+      }
+
+      const result = payload.TargetText || text;
+      cache.set(text, result);
+      return result;
+    } catch (error) {
+      console.error('[i18n] 腾讯翻译失败:', error.message);
       return text;
     }
-
-    const result = payload.TargetText || text;
-    cache.set(text, result);
-    return result;
-  } catch (error) {
-    console.error('[i18n] 腾讯翻译失败:', error.message);
-    return text;
-  }
+  }).finally(() => inFlight.delete(text));
+  inFlight.set(text, pending);
+  return pending;
 }

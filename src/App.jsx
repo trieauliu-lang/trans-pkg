@@ -511,7 +511,7 @@ function TaskDetail({ task, translations, apiKeys = [], onAction, onEdit, focuse
 
 export default function App() {
   const [activePage, setActivePage] = useState(() => window.location.hash === '#monitor' ? 'monitor' : 'fixtures');
-  const [initialFixtureSnapshot] = useState(readFixtureSnapshot);
+  const [initialFixtureSnapshot] = useState(() => readFixtureSnapshot(undefined, undefined, localDateValue()));
   const [health, setHealth] = useState({ apiConfigured: false, mode: 'demo' });
   const [tasks, setTasks] = useState([]);
   const [fixtures, setFixtures] = useState(initialFixtureSnapshot?.fixtures || []);
@@ -976,18 +976,31 @@ export default function App() {
   }, [soundReady, audioUrl]);
 
   useEffect(() => {
-    Promise.all([
-      fetch('/api/settings/api-keys').then((response) => response.json()),
-      fetch('/api/tasks').then((response) => response.json()),
-      fetch('/api/team-translations/known').then((response) => response.json()),
-    ])
-      .then(([healthBody, tasksBody, translationsBody]) => {
-        acceptApiKeyState(healthBody);
-        usageWarningLevelsRef.current = Object.fromEntries((healthBody.apiKeys || []).map((item) => [item.id, item.usageLevel]));
-        setTasks(tasksBody.tasks || []);
-        setTeamTranslations(translationsBody.translations || {});
-      })
-      .catch(() => showToast('无法连接监控服务'));
+    let cancelled = false;
+    const readJson = async (url) => {
+      const response = await fetch(url);
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || '请求失败');
+      return body;
+    };
+
+    readJson('/api/settings/api-keys').then((body) => {
+      if (cancelled) return;
+      acceptApiKeyState(body);
+      usageWarningLevelsRef.current = Object.fromEntries((body.apiKeys || []).map((item) => [item.id, item.usageLevel]));
+    }).catch(() => {
+      if (!cancelled) showToast('无法连接监控服务');
+    });
+
+    readJson('/api/tasks').then((body) => {
+      if (!cancelled) setTasks(body.tasks || []);
+    }).catch(() => {});
+
+    readJson('/api/team-translations/known').then((body) => {
+      if (!cancelled) setTeamTranslations(body.translations || {});
+    }).catch(() => {});
+
+    return () => { cancelled = true; };
   }, []);
 
   useEffect(() => {

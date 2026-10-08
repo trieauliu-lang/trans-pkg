@@ -49,3 +49,12 @@ test('legacy snapshot is claimed by only the first active key scope', () => {
   writeFixtureSnapshot(firstScope, '2026-09-12', [{ fixture: { id: 101 } }], {}, storage);
   assert.equal(readFixtureSnapshot(secondScope, storage), null);
 });
+
+test('old browser fixture snapshots can be ignored when opening a new day', () => {
+  const storage = memoryStorage();
+  const scope = fixtureSnapshotScope('key-a', 'api-football');
+  writeFixtureSnapshot(scope, '2026-09-12', [{ fixture: { id: 101 } }], {}, storage);
+
+  assert.equal(readFixtureSnapshot(scope, storage, '2026-10-08'), null);
+  assert.equal(readFixtureSnapshot(scope, storage, '2026-09-12').fixtures[0].fixture.id, 101);
+});
