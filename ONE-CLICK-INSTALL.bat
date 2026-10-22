@@ -49,7 +49,7 @@ if not errorlevel 1 goto open_browser
 
 echo.
 echo 正在启动比分提醒服务...
-start "比分提醒服务" cmd /k "node --env-file-if-exists=.env server\index.js --production"
+start "比分提醒服务" /min cmd /c call RUN-SERVICE.bat
 
 powershell -NoProfile -Command "$ready=$false; 1..30 | ForEach-Object { try { $response=Invoke-WebRequest -UseBasicParsing -TimeoutSec 2 http://127.0.0.1:8787/api/health; if ($response.StatusCode -eq 200) { $ready=$true; break } } catch {}; Start-Sleep -Seconds 1 }; if ($ready) { exit 0 } else { exit 1 }"
 if errorlevel 1 (
@@ -62,6 +62,7 @@ if errorlevel 1 (
 start "" "http://localhost:8787"
 echo.
 echo 安装并启动完成，浏览器已打开。
+echo 后台服务窗口已最小化；请保持该窗口运行。
 echo 以后只需双击 start-windows.bat 即可启动。
 pause
 exit /b 0
