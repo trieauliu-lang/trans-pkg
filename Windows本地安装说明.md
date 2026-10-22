@@ -4,6 +4,17 @@
 
 `http://localhost:8787`
 
+## 最简单的一键安装
+
+1. 将 ZIP 完整解压到普通文件夹，例如 `D:\match-pulse-local`，不要直接在压缩包中运行。
+2. 双击 `ONE-CLICK-INSTALL.bat`。
+3. 脚本会自动检查 Node.js、安装依赖、启动服务并打开浏览器。
+4. 首次启动后，在网页右上角导入自己的比分 API Key。
+
+如果电脑没有 Node.js，脚本会优先调用 Windows 自带的 `winget` 安装 Node.js LTS。安装期间可能出现一次系统授权提示，请允许。没有 `winget` 的旧系统会自动打开 Node.js 下载页，安装完成后再次双击一键安装文件即可。
+
+如果 Windows SmartScreen 阻止脚本，请确认文件来自本安装包，再选择“更多信息”→“仍要运行”。
+
 ## 安装要求
 
 - Windows 10 或 Windows 11（64 位）
@@ -14,15 +25,13 @@ Node.js 下载地址：<https://nodejs.org/zh-cn/download>
 
 安装 Node.js 时保持默认选项即可。安装完成后如脚本仍提示找不到 Node.js，请关闭现有窗口后重新打开，或重启电脑一次。
 
-## 安装与启动
+## 手动安装与启动
 
 1. 将 ZIP 完整解压到普通文件夹，例如 `D:\match-pulse-local`，不要直接在压缩包中运行。
 2. 双击 `install-windows.bat`，等待依赖检查、测试和构建完成。
 3. 双击 `start-windows.bat`。
 4. 浏览器会自动打开 `http://localhost:8787`。
 5. 需要停止服务时，回到启动服务的命令窗口并按 `Ctrl + C`，再输入 `Y` 确认。
-
-如果 Windows SmartScreen 阻止脚本，请确认文件来自本安装包，再选择“更多信息”→“仍要运行”。
 
 ## 配置比分 API
 
