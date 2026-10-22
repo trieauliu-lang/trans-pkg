@@ -15,9 +15,17 @@ if not exist "dist\index.html" (
   exit /b 1
 )
 
-echo 比分提醒服务正在启动：http://localhost:8787
-echo 服务异常退出时会在 5 秒后自动重启。
-echo 需要彻底停止服务时，请关闭本窗口。
-start "" powershell -NoProfile -WindowStyle Hidden -Command "Start-Sleep -Seconds 2; Start-Process 'http://localhost:8787'"
-call RUN-SERVICE.bat
+echo 正在后台启动比分提醒服务...
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0START-BACKGROUND.ps1"
+if errorlevel 1 (
+  echo.
+  echo 服务启动失败，请查看 data\server-error.log 和 data\server-supervisor.log。
+  pause
+  exit /b 1
+)
+
+start "" "http://localhost:8787"
+echo 服务已在后台运行，本窗口会自动关闭。
+echo 需要停止服务时，请双击 STOP-SERVICE.bat。
+timeout /t 2 /nobreak >nul
 

@@ -6,26 +6,39 @@ import { fileURLToPath } from 'node:url';
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
-function readBatch(name) {
+function readScript(name) {
   return fs.readFileSync(path.join(rootDir, name), 'utf8');
 }
 
-test('Windows one-click installer launches the supervised service', () => {
-  const installer = readBatch('ONE-CLICK-INSTALL.bat');
-  assert.match(installer, /start "比分提醒服务" \/min cmd \/c call RUN-SERVICE\.bat/);
-  assert.doesNotMatch(installer, /cd \/d ""%CD%""|\^&\^& node/);
+test('Windows launchers start the hidden background supervisor', () => {
+  for (const name of ['ONE-CLICK-INSTALL.bat', 'start-windows.bat']) {
+    const launcher = readScript(name);
+    assert.match(launcher, /powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0START-BACKGROUND\.ps1"/);
+    assert.doesNotMatch(launcher, /RUN-SERVICE\.bat|start "比分提醒服务" \/min/);
+  }
 });
 
-test('Windows service launcher restarts the Node process after an exit', () => {
-  const launcher = readBatch('RUN-SERVICE.bat');
-  assert.match(launcher, /node --env-file-if-exists=\.env server\\index\.js --production/);
-  assert.match(launcher, /timeout \/t 5 \/nobreak >nul/);
-  assert.match(launcher, /goto run/);
+test('Windows service supervisor is hidden and restarts Node after an exit', () => {
+  const launcher = readScript('RUN-SERVICE.ps1');
+  assert.match(launcher, /Start-Process/);
+  assert.match(launcher, /-WindowStyle Hidden/);
+  assert.match(launcher, /--env-file-if-exists=\.env/);
+  assert.match(launcher, /server\\index\.js/);
+  assert.match(launcher, /Start-Sleep -Seconds 5/);
+  assert.match(launcher, /service\.pid/);
+  assert.match(launcher, /node\.pid/);
+});
+
+test('Windows stop script only stops recorded service processes', () => {
+  const stopper = readScript('STOP-BACKGROUND.ps1');
+  assert.match(stopper, /Get-Process -Id \$recordedId/);
+  assert.match(stopper, /Stop-Process -Id \$recordedId/);
+  assert.doesNotMatch(stopper, /Get-Process\s+(node|powershell)|taskkill/);
 });
 
 test('Windows batch files keep CRLF line endings', () => {
-  for (const name of ['ONE-CLICK-INSTALL.bat', 'RUN-SERVICE.bat', 'start-windows.bat', 'install-windows.bat']) {
-    const source = readBatch(name);
+  for (const name of ['ONE-CLICK-INSTALL.bat', 'STOP-SERVICE.bat', 'start-windows.bat', 'install-windows.bat']) {
+    const source = readScript(name);
     assert.equal(source.replace(/\r\n/g, '').includes('\n'), false, `${name} must use CRLF`);
   }
 });

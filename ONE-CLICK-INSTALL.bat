@@ -44,16 +44,11 @@ call npm run build
 if errorlevel 1 goto install_failed
 
 :build_ready
-powershell -NoProfile -Command "try { $response=Invoke-WebRequest -UseBasicParsing -TimeoutSec 2 http://127.0.0.1:8787/api/health; if ($response.StatusCode -eq 200) { exit 0 } } catch {}; exit 1"
-if not errorlevel 1 goto open_browser
-
 echo.
 echo 正在启动比分提醒服务...
-start "比分提醒服务" /min cmd /c call RUN-SERVICE.bat
-
-powershell -NoProfile -Command "$ready=$false; 1..30 | ForEach-Object { try { $response=Invoke-WebRequest -UseBasicParsing -TimeoutSec 2 http://127.0.0.1:8787/api/health; if ($response.StatusCode -eq 200) { $ready=$true; break } } catch {}; Start-Sleep -Seconds 1 }; if ($ready) { exit 0 } else { exit 1 }"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0START-BACKGROUND.ps1"
 if errorlevel 1 (
-  echo 服务启动超时，请查看“比分提醒服务”窗口中的错误信息。
+  echo 服务启动超时，请查看 data\server-error.log 和 data\server-supervisor.log。
   pause
   exit /b 1
 )
@@ -62,7 +57,8 @@ if errorlevel 1 (
 start "" "http://localhost:8787"
 echo.
 echo 安装并启动完成，浏览器已打开。
-echo 后台服务窗口已最小化；请保持该窗口运行。
+echo 服务已隐藏在后台运行，不需要保留黑色窗口。
+echo 需要停止服务时，请双击 STOP-SERVICE.bat。
 echo 以后只需双击 start-windows.bat 即可启动。
 pause
 exit /b 0
