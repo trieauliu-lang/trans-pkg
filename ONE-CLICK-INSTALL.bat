@@ -60,7 +60,8 @@ echo 安装并启动完成，浏览器已打开。
 echo 服务已隐藏在后台运行，不需要保留黑色窗口。
 echo 需要停止服务时，请双击 STOP-SERVICE.bat。
 echo 以后只需双击 start-windows.bat 即可启动。
-pause
+echo 本窗口会自动关闭。
+timeout /t 3 /nobreak >nul
 exit /b 0
 
 :check_node
