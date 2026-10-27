@@ -36,6 +36,13 @@ test('Windows stop script only stops recorded service processes', () => {
   assert.doesNotMatch(stopper, /Get-Process\s+(node|powershell)|taskkill/);
 });
 
+test('Windows PowerShell 5.1 scripts include a UTF-8 BOM', () => {
+  for (const name of ['RUN-SERVICE.ps1', 'START-BACKGROUND.ps1', 'STOP-BACKGROUND.ps1']) {
+    const source = fs.readFileSync(path.join(rootDir, name));
+    assert.deepEqual([...source.subarray(0, 3)], [0xef, 0xbb, 0xbf], `${name} must start with a UTF-8 BOM`);
+  }
+});
+
 test('Windows batch files keep CRLF line endings', () => {
   for (const name of ['ONE-CLICK-INSTALL.bat', 'STOP-SERVICE.bat', 'start-windows.bat', 'install-windows.bat']) {
     const source = readScript(name);

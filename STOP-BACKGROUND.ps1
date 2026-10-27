@@ -1,4 +1,4 @@
-$ErrorActionPreference = 'SilentlyContinue'
+﻿$ErrorActionPreference = 'SilentlyContinue'
 
 $dataDir = Join-Path $PSScriptRoot 'data'
 $servicePidFile = Join-Path $dataDir 'service.pid'

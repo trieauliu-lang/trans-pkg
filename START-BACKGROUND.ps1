@@ -1,4 +1,4 @@
-$ErrorActionPreference = 'Stop'
+﻿$ErrorActionPreference = 'Stop'
 
 $root = $PSScriptRoot
 $dataDir = Join-Path $root 'data'
